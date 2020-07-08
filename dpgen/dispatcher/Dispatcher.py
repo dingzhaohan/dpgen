@@ -319,6 +319,10 @@ def make_dispatcher(mdata, mdata_resource=None, work_path=None, run_tasks=None, 
             return dispatcher
         elif mdata['cloud_resources']['cloud_platform'] == 'ucloud':
             pass
+        elif mdata['cloud_resources']['cloud_platform'] == 'cloud_server':
+            from dpgen.dispatcher.CloudServer import CloudServer
+            dispatcher = CloudServer(mdata, mdata_resource, work_path, run_tasks, group_size, mdata['cloud_resources'])
+            return dispatcher
     else:    
         hostname = mdata.get('hostname', None)
         #use_uuid = mdata.get('use_uuid', False)
