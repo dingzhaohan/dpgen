@@ -25,9 +25,6 @@ class CloudServer:
             mark_failure = False,
             outlog = 'log',
             errlog = 'err'):
-        # 有一堆他传过来的东西
-        # work_dir, tasks, group_size, forward_files, backward_files, command...
-        # 需要加一个stage参数，让我知道是啥命令
         cwd = os.getcwd()
         print("CloudServer:", cwd, work_path, tasks)
         dpgen_data = tail('record.dpgen', 1)
@@ -36,33 +33,38 @@ class CloudServer:
         # 0, 1, 2: make_train, run_train, post_train
         # 3, 4, 5: make_model_devi, run_model_devi, post_model_devi
         # 6, 7, 8: make_fp, run_fp, post_fp
-        self.job_resources = []
         for task in tasks:
             print(task)
             self.of = uuid.uuid1().hex + '.tgz'
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             remote_oss_dir = 'dpgen/%s' % self.of
-            self.job_resources.append('http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir)
             upload_file_to_oss(remote_oss_dir, self.of)
             os.remove(self.of)
-
-        input_data = {}
-        input_data['job_resources'] = self.job_resources
-        if current_stage == "0":
-            input_data['sub_stage'] = 'train'
-            submit_job(input_data)
-        elif stage == "3":
-            input_data['sub_stage'] = 'model_devi'
-            submit_job(input_data)
-        elif stage == "6":
-            input_data['sub_stage'] = 'fp'
+            input_data = {}
+            input_data['job_resources'] = 'http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir
+            input_data['command'] = command
+            input_data['backward_files'] = backward_task_files
+            input_data['local_dir'] = os.path.join(work_path, task)
+            input_data['sub_stage'] = current_stage # 0: train, 3: model_devi, 6: fp
             submit_job(input_data)
 
 
-def submit_job(sub_stage, input_data, root_job_id=None):
+        while not self.all_finished():
+            time.sleep(10)
+
+
+    def all_finished(self):
+        return False
+
+
+def get_job_summary():
+    pass
+
+def submit_job(input_data, root_job_id=None):
     data = {
         'job_type': "dpgen",
-        'user_name': 'dingzhaohan',
+        'user_name': input_data['user_name'],
+        'user_password': input_data['user_password'],
         'input_data': input_data
     }
     if root_job_id:
@@ -150,4 +152,22 @@ def upload_file_to_oss(oss_task_dir, zip_task_file):
             offset += num_to_upload
             part_number += 1
     bucket.complete_multipart_upload(oss_task_dir, upload_id, parts)
+
+def download_file_from_oss(oss_task_dir, local_dir):
+    resp = requests.get(oss_task_dir, stream=True)
+    local_file = oss_task_dir.split('/')[-1]
+    f = open(os.path.join(local_dir, local_file), 'wb')
+    for chunk in resp.iter_content():
+        if chunk:
+            f.write(chunk)
+    cwd = os.getcwd()
+    os.chdir(local_dir)
+    with tarfile.open(local_file, "r:gz") as tar:
+        tar.extractall()
+    os.remove(local_file)
+    os.chdir(cwd)
+
+
+
+
 
