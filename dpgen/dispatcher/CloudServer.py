@@ -2,6 +2,10 @@ import uuid
 import os
 import sys
 import oss2
+from oss2 import SizedFileAdapter, determine_part_size
+from oss2.models import PartInfo
+import json
+import time
 import tarfile
 import requests
 class CloudServer:
@@ -32,46 +36,28 @@ class CloudServer:
         # 0, 1, 2: make_train, run_train, post_train
         # 3, 4, 5: make_model_devi, run_model_devi, post_model_devi
         # 6, 7, 8: make_fp, run_fp, post_fp
-        print(dpgen_data, current_iter, current_stage)
+        self.job_resources = []
         for task in tasks:
             print(task)
             self.of = uuid.uuid1().hex + '.tgz'
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             remote_oss_dir = 'dpgen/%s' % self.of
+            self.job_resources.append('http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir)
             upload_file_to_oss(remote_oss_dir, self.of)
             os.remove(self.of)
-        sys.exit()
 
+        input_data = {}
+        input_data['job_resources'] = self.job_resources
         if current_stage == "0":
-            self.submit_train()
+            input_data['sub_stage'] = 'train'
+            submit_job(input_data)
         elif stage == "3":
-            self.submit_model_devi()
+            input_data['sub_stage'] = 'model_devi'
+            submit_job(input_data)
         elif stage == "6":
-            self.submit_fp()
+            input_data['sub_stage'] = 'fp'
+            submit_job(input_data)
 
-
-    def submit_train(self):
-        tmp_uuid = uuid.uuid1().hex
-        zip_dir(train_job_dir, self.work_dir + "%s.zip" % tmp_uuid)
-        upload_oss()
-        input_data = {}
-        submit_job('train', input_data)
-
-    def submit_model_devi(self):
-        model_devi_job_dir = os.path.join(self.work_dir, '01.model_devi')
-        tmp_uuid = uuid.uuid1().hex
-        zip_dir(model_devi_job_dir, self.work_dir + "%s.zip" % tmp_uuid)
-        upload_oss()
-        input_data = {}
-        submit_job('model_devi', input_data)
-
-    def submit_fp(self):
-        fp_job_dir = os.path.join(self.work_dir, '02.fp')
-        tmp_uuid = uuid.uuid1().hex
-        zip_dir(fp_job_dir, self.work_dir + "%s.zip" % tmp_uuid)
-        upload_oss()
-        input_data = {}
-        submit_job('fp', input_data)
 
 def submit_job(sub_stage, input_data, root_job_id=None):
     data = {
@@ -140,8 +126,8 @@ def get_bucket():
     key_secret = oss_info['AccessKeySecret']
     token = oss_info['SecurityToken']
     auth = oss2.StsAuth(key_id, key_secret, token)
-    end_point = 'http://oss-us-west-1.aliyuncs.com'
-    bucket_name = "deepmp"
+    end_point = 'http://oss-cn-shenzhen.aliyuncs.com'
+    bucket_name = "dpcloudserver"
     bucket = oss2.Bucket(auth, end_point, bucket_name)
     print("get token successfully!")
     return bucket
