@@ -9,8 +9,9 @@ import time
 import tarfile
 import requests
 class CloudServer:
-    def __init__(self, mdata, mdata_resource, work_path, run_tasks, group_size, cloud_resources):
-        pass
+    def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources):
+        self.cloud_resources = cloud_resources
+        self.root_job_id = -1
 
     def run_jobs(self,
             resources,
@@ -41,13 +42,25 @@ class CloudServer:
             upload_file_to_oss(remote_oss_dir, self.of)
             os.remove(self.of)
             input_data = {}
+            input_data['job_type'] = 'dpgen'
             input_data['job_resources'] = 'http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir
-            input_data['command'] = command
+            input_data['command'] = command[0]
             input_data['backward_files'] = backward_task_files
             input_data['local_dir'] = os.path.join(work_path, task)
+            input_data['task'] = task
             input_data['sub_stage'] = current_stage # 0: train, 3: model_devi, 6: fp
-            submit_job(input_data)
-
+            input_data['user_name'] = 'dingzhaohan'
+            input_data['user_password'] = '123456'
+            input_data['machine'] = {}
+            input_data['machine']['platform'] = 'ali'
+            input_data['machine']['resources'] = self.cloud_resources
+            if not os.path.exists('root_job_id'):
+                self.root_job_id = submit_job(input_data)
+                with open('root_job_id', 'w') as fp:
+                    fp.write(str(self.root_job_id))
+            else:
+                root_job_id = tail('root_job_id', 1)[0]
+                submit_job(input_data, root_job_id)
 
         while not self.all_finished():
             time.sleep(10)
@@ -74,7 +87,8 @@ def submit_job(input_data, root_job_id=None):
     headers = {'Content-Type': 'application/json'} ## headers中添加上content-type这个参数，指定为json格式
     time.sleep(0.2)
     res = requests.post(url=url, headers=headers, data=json.dumps(data)) ## post的时候，将data字典形式的参数用json包转换成json格式。
-    print(res.text)
+
+    return res.json()['job_id']
 
 def tar_dir(of, comm_files, task_files, comm_dir, task_dir,  dereference=True):
     cwd = os.getcwd()
