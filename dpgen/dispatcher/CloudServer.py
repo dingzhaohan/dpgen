@@ -49,19 +49,22 @@ class CloudServer:
             input_data['local_dir'] = os.path.join(work_path, task)
             input_data['task'] = task
             input_data['sub_stage'] = current_stage # 0: train, 3: model_devi, 6: fp
-            input_data['user_name'] = 'dingzhaohan'
-            input_data['user_password'] = '123456'
+            input_data['username'] = 'dingzhaohan'
+            input_data['password'] = '123456'
             input_data['machine'] = {}
             input_data['machine']['platform'] = 'ali'
             input_data['machine']['resources'] = self.cloud_resources
-            if not os.path.exists('root_job_id'):
-                self.root_job_id = submit_job(input_data)
-                with open('root_job_id', 'w') as fp:
-                    fp.write(str(self.root_job_id))
+            if not os.path.exists('previous_job_id'):
+                self.previous_job_id = submit_job(input_data)
+                with open('previous_job_id', 'w') as fp:
+                    fp.write(str(self.previous_job_id))
+                print(self.previous_job_id)
+                input_data['previous_job_id'] = self.previous_job_id
             else:
-                root_job_id = tail('root_job_id', 1)[0]
-                submit_job(input_data, root_job_id)
-
+                previous_job_id = tail('previous_job_id', 1)[0]
+                submit_job(input_data, previous_job_id)
+                input_data['previous_job_id'] = previous_job_id
+                print(previous_job_id)
         while not self.all_finished():
             time.sleep(10)
 
@@ -73,15 +76,15 @@ class CloudServer:
 def get_job_summary():
     pass
 
-def submit_job(input_data, root_job_id=None):
+def submit_job(input_data, previous_job_id=None):
     data = {
         'job_type': "dpgen",
-        'user_name': input_data['user_name'],
-        'user_password': input_data['user_password'],
+        'username': input_data['username'],
+        'password': input_data['password'],
         'input_data': input_data
     }
-    if root_job_id:
-        data['root_job_id'] = root_job_id
+    if previous_job_id:
+        data['previous_job_id'] = previous_job_id
     print(data)
     url = 'http://39.98.150.188:5001/insert_job'
     headers = {'Content-Type': 'application/json'} ## headers中添加上content-type这个参数，指定为json格式
