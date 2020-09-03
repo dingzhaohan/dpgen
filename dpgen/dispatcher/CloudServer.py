@@ -12,6 +12,9 @@ class CloudServer:
     def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources):
         self.cloud_resources = cloud_resources
         self.root_job_id = -1
+        self.work_path = work_path # iter.000000/02.fp
+        self.run_tasks = run_tasks # ['task.000.000000', 'task.000.000001', 'task.000.000002', 'task.000.000003']
+        self.ratio_failure = mdata_resources.get('ratio_failure', 0)
 
     def run_jobs(self,
             resources,
@@ -34,14 +37,25 @@ class CloudServer:
         # 0, 1, 2: make_train, run_train, post_train
         # 3, 4, 5: make_model_devi, run_model_devi, post_model_devi
         # 6, 7, 8: make_fp, run_fp, post_fp
+
+
+        # TODO: re-caculate
         for task in tasks:
             print(task)
+
+            if os.path.exists(os.path.join(work_path, task, 'tag_upload')):
+                continue
+
             self.of = uuid.uuid1().hex + '.tgz'
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             remote_oss_dir = 'dpgen/%s' % self.of
             upload_file_to_oss(remote_oss_dir, self.of)
+
+            os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
+
             os.remove(self.of)
             input_data = {}
+            input_data['dpgen'] = True
             input_data['job_type'] = 'dpgen'
             input_data['job_resources'] = 'http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir
             input_data['command'] = command[0]
@@ -54,27 +68,75 @@ class CloudServer:
             input_data['machine'] = {}
             input_data['machine']['platform'] = 'ali'
             input_data['machine']['resources'] = self.cloud_resources
+
+            # for machine config, such as kernel, GPU etc...
+            input_data['task_resources'] = resources
             if not os.path.exists('previous_job_id'):
                 self.previous_job_id = submit_job(input_data)
+                input_data['previous_job_id'] = self.previous_job_id
                 with open('previous_job_id', 'w') as fp:
                     fp.write(str(self.previous_job_id))
                 print(self.previous_job_id)
-                input_data['previous_job_id'] = self.previous_job_id
             else:
                 previous_job_id = tail('previous_job_id', 1)[0]
-                submit_job(input_data, previous_job_id)
                 input_data['previous_job_id'] = previous_job_id
+                submit_job(input_data, previous_job_id)
                 print(previous_job_id)
-        while not self.all_finished():
+
+        while not self.all_finished(input_data):
             time.sleep(10)
 
 
-    def all_finished(self):
-        return False
+    def all_finished(self, input_data):
+        finish_num = 0
+        for ii in self.run_tasks:
+            if os.path.exists(os.path.join(self.work_dir), ii, 'tag_download'):
+                finish_num += 1
+        if finish_num / len(self.run_tasks) < (1 - self.ratio_failure): return False
+        return True
 
 
-def get_job_summary():
-    pass
+def analyse_and_download(input_data, current_iter, current_stage):
+    return_data = get_job_summary(input_data)
+    current_iter = int(current_iter)
+    current_data = [ii for ii in return_data if ii['iter'] == current_iter and ii['current_stage'] == current_stage]
+    for ii in current_data:
+        if os.path.exists(os.path.join(ii['local_dir'], "tag_download")):
+            continue
+        else:
+            if ii['status'] == 2:
+                download_file_from_oss(ii['result'], ii['local_dir'])
+                os.mknod(os.path.join(ii['local_dir'], 'tag_download'))
+
+
+def get_job_summary(input_data):
+    url = 'http://39.98.150.188:5001/get_job_details?job_id=%s&username=%s' % (input_data['previous_job_id'], input_data['username'])
+    headers = {'Content-Type': 'application/json'} ## headers中添加上content-type这个参数，指定为json格式
+    time.sleep(0.2)
+    # {"result": True, "data": [{"local_dir": local_dir, "download_addr": download_addr}] }
+    return_data = []
+    i = 0
+    while i < 3:
+        try:
+            res = requests.get(url=url, headers=headers)
+            data = res.json()['data']
+            details = res.json()['details']
+            for ii in details:
+                res_input_data = eval(ii['input_data'])
+                tmp_data = {}
+                tmp_data['sub_stage'] = res_input_data["sub_stage"]                        # '0', '3', '6'
+                tmp_data["local_dir"] = res_input_data["local_dir"]                        # 'iter.000000/01.model_devi/task.000.000009'
+                tmp_data["job_type"] = res_input_data["job_type"]                          # 'kit', 'lammps', 'fp'
+                tmp_data["status"] = ii["status"]                                          # 0, 1, 2 | unsubmitted, running, finished
+                tmp_data["result"] = ii["result"]                                          # oss_download_addr: "dpgen/699c2b26ed1011ea95c7a5aeac438cd3.download.tgz"
+                tmp_data["task_id"] = ii["task_id"]
+                tmp_data["iter"] = int(tmp_data["local_dir"].split("/")[0].split('.')[1])  # iter.000001 -> 1
+                return_data.append(tmp_data)
+            break
+        except Exception as e:
+            i += 1
+    return return_data
+
 
 def submit_job(input_data, previous_job_id=None):
     data = {
@@ -170,13 +232,10 @@ def upload_file_to_oss(oss_task_dir, zip_task_file):
             part_number += 1
     bucket.complete_multipart_upload(oss_task_dir, upload_id, parts)
 
-def download_file_from_oss(oss_task_dir, local_dir):
-    resp = requests.get(oss_task_dir, stream=True)
-    local_file = oss_task_dir.split('/')[-1]
-    f = open(os.path.join(local_dir, local_file), 'wb')
-    for chunk in resp.iter_content():
-        if chunk:
-            f.write(chunk)
+def download_file_from_oss(oss_path, local_dir):
+    bucket = get_bucket()
+    local_file = oss_path.split('/')[-1]
+    bucket.get_object_to_file(oss_path, os.path.join(local_dir, local_file))
     cwd = os.getcwd()
     os.chdir(local_dir)
     with tarfile.open(local_file, "r:gz") as tar:
