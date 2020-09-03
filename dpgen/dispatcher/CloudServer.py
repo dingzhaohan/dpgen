@@ -41,19 +41,10 @@ class CloudServer:
 
         # TODO: re-caculate
         for task in tasks:
-            print(task)
-
-            if os.path.exists(os.path.join(work_path, task, 'tag_upload')):
-                continue
+            # print(task)
 
             self.of = uuid.uuid1().hex + '.tgz'
-            tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             remote_oss_dir = 'dpgen/%s' % self.of
-            upload_file_to_oss(remote_oss_dir, self.of)
-
-            os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
-
-            os.remove(self.of)
             input_data = {}
             input_data['dpgen'] = True
             input_data['job_type'] = 'dpgen'
@@ -68,9 +59,17 @@ class CloudServer:
             input_data['machine'] = {}
             input_data['machine']['platform'] = 'ali'
             input_data['machine']['resources'] = self.cloud_resources
-
             # for machine config, such as kernel, GPU etc...
-            input_data['task_resources'] = resources
+            input_data['resources'] = resources
+            if os.path.exists(os.path.join(work_path, task, 'tag_upload')):
+                continue
+
+            tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
+            upload_file_to_oss(remote_oss_dir, self.of)
+
+            os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
+            os.remove(self.of)
+
             if not os.path.exists('previous_job_id'):
                 self.previous_job_id = submit_job(input_data)
                 input_data['previous_job_id'] = self.previous_job_id
@@ -90,7 +89,7 @@ class CloudServer:
     def all_finished(self, input_data):
         finish_num = 0
         for ii in self.run_tasks:
-            if os.path.exists(os.path.join(self.work_dir), ii, 'tag_download'):
+            if os.path.exists(os.path.join(self.work_path, ii, 'tag_download')):
                 finish_num += 1
         if finish_num / len(self.run_tasks) < (1 - self.ratio_failure): return False
         return True
