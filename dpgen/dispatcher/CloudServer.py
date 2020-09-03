@@ -46,6 +46,8 @@ class CloudServer:
             self.of = uuid.uuid1().hex + '.tgz'
             remote_oss_dir = 'dpgen/%s' % self.of
             input_data = {}
+            if os.path.exists('previous_job_id'):
+                input_data['previous_job_id'] = tail('previous_job_id', 1)[0]
             input_data['dpgen'] = True
             input_data['job_type'] = 'dpgen'
             input_data['job_resources'] = 'http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir
@@ -82,11 +84,12 @@ class CloudServer:
                 submit_job(input_data, previous_job_id)
                 print(previous_job_id)
 
-        while not self.all_finished(input_data):
+        while not self.all_finished(input_data, current_iter, current_stage):
             time.sleep(10)
 
 
-    def all_finished(self, input_data):
+    def all_finished(self, input_data, current_iter, current_stage):
+        analyse_and_download(input_data, current_iter, current_stage)
         finish_num = 0
         for ii in self.run_tasks:
             if os.path.exists(os.path.join(self.work_path, ii, 'tag_download')):
@@ -98,7 +101,7 @@ class CloudServer:
 def analyse_and_download(input_data, current_iter, current_stage):
     return_data = get_job_summary(input_data)
     current_iter = int(current_iter)
-    current_data = [ii for ii in return_data if ii['iter'] == current_iter and ii['current_stage'] == current_stage]
+    current_data = [ii for ii in return_data if ii['iter'] == current_iter and ii['sub_stage'] == current_stage]
     for ii in current_data:
         if os.path.exists(os.path.join(ii['local_dir'], "tag_download")):
             continue
