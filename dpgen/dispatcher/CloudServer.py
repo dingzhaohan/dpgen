@@ -8,6 +8,8 @@ import json
 import time
 import tarfile
 import requests
+
+
 class CloudServer:
     def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources):
         self.cloud_resources = cloud_resources
@@ -39,10 +41,7 @@ class CloudServer:
         # 6, 7, 8: make_fp, run_fp, post_fp
 
 
-        # TODO: re-caculate
         for task in tasks:
-            # print(task)
-
             self.of = uuid.uuid1().hex + '.tgz'
             remote_oss_dir = 'dpgen/%s' % self.of
             input_data = {}
@@ -56,22 +55,25 @@ class CloudServer:
             input_data['local_dir'] = os.path.join(work_path, task)
             input_data['task'] = task
             input_data['sub_stage'] = current_stage # 0: train, 3: model_devi, 6: fp
-            input_data['username'] = 'dingzhaohan'
-            input_data['password'] = '123456'
+            input_data['username'] = self.cloud_resources['username']
+            input_data['password'] = self.cloud_resources['password']
             input_data['machine'] = {}
-            input_data['machine']['platform'] = 'ali'
             input_data['machine']['resources'] = self.cloud_resources
+            for key, value in resources.items():
+                input_data['machine']['resources'][key] = value
             # for machine config, such as kernel, GPU etc...
-            input_data['resources'] = resources
+
             if os.path.exists(os.path.join(work_path, task, 'tag_upload')):
                 continue
 
+            # compress files in two folders, upload to oss and touch upload_tag, then remove local tarfile
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             upload_file_to_oss(remote_oss_dir, self.of)
 
             os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
             os.remove(self.of)
 
+            # all subtask belong to one dpgen job which has one job_id, for statistic
             if not os.path.exists('previous_job_id'):
                 self.previous_job_id = submit_job(input_data)
                 input_data['previous_job_id'] = self.previous_job_id
@@ -113,9 +115,8 @@ def analyse_and_download(input_data, current_iter, current_stage):
 
 def get_job_summary(input_data):
     url = 'http://39.98.150.188:5001/get_job_details?job_id=%s&username=%s' % (input_data['previous_job_id'], input_data['username'])
-    headers = {'Content-Type': 'application/json'} ## headers中添加上content-type这个参数，指定为json格式
+    headers = {'Content-Type': 'application/json'}
     time.sleep(0.2)
-    # {"result": True, "data": [{"local_dir": local_dir, "download_addr": download_addr}] }
     return_data = []
     i = 0
     while i < 3:
@@ -151,9 +152,9 @@ def submit_job(input_data, previous_job_id=None):
         data['previous_job_id'] = previous_job_id
     print(data)
     url = 'http://39.98.150.188:5001/insert_job'
-    headers = {'Content-Type': 'application/json'} ## headers中添加上content-type这个参数，指定为json格式
+    headers = {'Content-Type': 'application/json'}
     time.sleep(0.2)
-    res = requests.post(url=url, headers=headers, data=json.dumps(data)) ## post的时候，将data字典形式的参数用json包转换成json格式。
+    res = requests.post(url=url, headers=headers, data=json.dumps(data))
 
     return res.json()['job_id']
 
@@ -170,7 +171,6 @@ def tar_dir(of, comm_files, task_files, comm_dir, task_dir,  dereference=True):
             tar.add(ii)
     os.chdir(cwd)
 
-#获取文件最后N行的函数
 def tail(inputfile, num_of_lines):
     filesize = os.path.getsize(inputfile)
     blocksize = 1024
@@ -185,9 +185,7 @@ def tail(inputfile, num_of_lines):
     lines =  dat_file.readlines()
     if lines :
         #last_line = lines[-1].strip()
-        #最后两行，N行就改数字，即可
         last_line = lines[-num_of_lines:]
-    #print "last line : ", last_line
     dat_file.close()
     data = []
     for line in last_line:
@@ -217,22 +215,26 @@ def get_bucket():
 
 def upload_file_to_oss(oss_task_dir, zip_task_file):
     bucket = get_bucket()
-    total_size = os.path.getsize(zip_task_file)
-    # determine_part_size方法用于确定分片大小。
-    part_size = determine_part_size(total_size, preferred_size=1000 * 1024)
-    upload_id = bucket.init_multipart_upload(oss_task_dir).upload_id
-    parts = []
-    with open(zip_task_file, 'rb') as fileobj:
-        part_number = 1
-        offset = 0
-        while offset < total_size:
-            num_to_upload = min(part_size, total_size - offset)
-            # 调用SizedFileAdapter(fileobj, size)方法会生成一个新的文件对象，重新计算起始追加位置。
-            result = bucket.upload_part(oss_task_dir, upload_id, part_number, SizedFileAdapter(fileobj, num_to_upload))
-            parts.append(PartInfo(part_number, result.etag))
-            offset += num_to_upload
-            part_number += 1
-    bucket.complete_multipart_upload(oss_task_dir, upload_id, parts)
+    i = 0
+    while i < 5:
+        try:
+            total_size = os.path.getsize(zip_task_file)
+            part_size = determine_part_size(total_size, preferred_size=1000 * 1024)
+            upload_id = bucket.init_multipart_upload(oss_task_dir).upload_id
+            parts = []
+            with open(zip_task_file, 'rb') as fileobj:
+                part_number = 1
+                offset = 0
+                while offset < total_size:
+                    num_to_upload = min(part_size, total_size - offset)
+                    result = bucket.upload_part(oss_task_dir, upload_id, part_number, SizedFileAdapter(fileobj, num_to_upload))
+                    parts.append(PartInfo(part_number, result.etag))
+                    offset += num_to_upload
+                    part_number += 1
+            bucket.complete_multipart_upload(oss_task_dir, upload_id, parts)
+            break
+        except:
+            i += 1
 
 def download_file_from_oss(oss_path, local_dir):
     bucket = get_bucket()

@@ -46,7 +46,7 @@ def decide_train_machine(mdata):
 	    	if 'command' in mdata["train"][0]:
 	    		mdata["train_command"] = mdata["train"][0]["command"]
 	    	continue_flag = True
-		
+
 	    pd_flag = False
 	    pd_count_list =[]
 	    # pd for pending job in slurm
@@ -56,7 +56,7 @@ def decide_train_machine(mdata):
 	        #assert isinstance(mdata['train']['machine'], list)
 	        #assert isinstance(mdata['train']['resources'], list)
 	        #assert len(mdata['train']['machine']) == len(mdata['train']['resources'])
-	        # mdata['train'] is  a list 
+	        # mdata['train'] is  a list
 	        for machine_idx in range(len(mdata['train'])):
 	            temp_machine = mdata['train'][machine_idx]['machine']
 	            temp_resources = mdata['train'][machine_idx]['resources']
@@ -76,7 +76,7 @@ def decide_train_machine(mdata):
 	            temp_context.clean()
 	            ## If there is no need to waiting for allocation
 	            if pd_count ==1:
-	                mdata['train_machine'] = temp_machine   
+	                mdata['train_machine'] = temp_machine
 	                mdata['train_resources'] = temp_resources
 	                if 'deepmd_path' in mdata['train'][machine_idx]:
 	                	mdata['deepmd_path'] = mdata['train'][machine_idx]['deepmd_path']
@@ -145,7 +145,7 @@ def decide_model_devi_machine(mdata):
 	    	mdata["model_devi_resources"] = mdata["model_devi"][0]["resources"]
 	    	mdata["lmp_command"] = mdata["model_devi"][0]["command"]
 	    	#if "group_size" in mdata["train"][0]:
-	    	mdata["model_devi_group_size"] = mdata["model_devi"][0]["group_size"]
+	    	mdata["model_devi_group_size"] = mdata["model_devi"][0].get("group_size", 1)
 	    	continue_flag = True
 
 	    pd_count_list =[]
@@ -155,7 +155,7 @@ def decide_model_devi_machine(mdata):
 	        #assert isinstance(mdata['model_devi']['machine'], list)
 	        #ssert isinstance(mdata['model_devi']['resources'], list)
 	        #assert len(mdata['model_devi']['machine']) == len(mdata['model_devi']['resources'])
-	    
+
 	        for machine_idx in range(len(mdata['model_devi'])):
 	            temp_machine = mdata['model_devi'][machine_idx]['machine']
 	            temp_resources = mdata['model_devi'][machine_idx]['resources']
@@ -177,7 +177,7 @@ def decide_model_devi_machine(mdata):
 	            pd_count = len(pd_response)
 	            temp_context.clean()
 	            if pd_count ==0:
-	                mdata['model_devi_machine'] = temp_machine   
+	                mdata['model_devi_machine'] = temp_machine
 	                mdata['model_devi_resources'] = temp_resources
 	                mdata['lmp_command'] = mdata['model_devi'][machine_idx]['command']
 	                mdata['model_devi_group_size'] =  mdata['model_devi'][machine_idx]['group_size']
@@ -227,10 +227,10 @@ def decide_fp_machine(mdata):
 	    	mdata["fp_resources"] = mdata["fp"][0]["resources"]
 	    	mdata["fp_command"] = mdata["fp"][0]["command"]
 	    	#if "group_size" in mdata["train"][0]:
-	    	mdata["fp_group_size"] = mdata["fp"][0]["group_size"]
+	    	mdata["fp_group_size"] = mdata["fp"][0].get("group_size", 1)
 	    	continue_flag = True
 
-	   
+
 	    pd_count_list =[]
 	    pd_flag = False
 	    if not continue_flag:
@@ -253,7 +253,7 @@ def decide_fp_machine(mdata):
 		        temp_context.clean()
 		        #dlog.info(temp_machine["username"] + " " + temp_machine["hostname"] +  " " + str(pd_count))
 		        if pd_count ==0:
-		            mdata['fp_machine'] = temp_machine   
+		            mdata['fp_machine'] = temp_machine
 		            mdata['fp_resources'] = temp_resources
 		            mdata['fp_command'] = mdata['fp'][machine_idx]['command']
 		            mdata['fp_group_size'] =  mdata['fp'][machine_idx]['group_size']
