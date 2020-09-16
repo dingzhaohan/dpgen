@@ -8,7 +8,7 @@ import json
 import time
 import tarfile
 import requests
-
+from dpgen import dlog
 
 class CloudServer:
     def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources):
@@ -17,6 +17,17 @@ class CloudServer:
         self.work_path = work_path # iter.000000/02.fp
         self.run_tasks = run_tasks # ['task.000.000000', 'task.000.000001', 'task.000.000002', 'task.000.000003']
         self.ratio_failure = mdata_resources.get('ratio_failure', 0)
+
+    def decide_type(self):
+        remote_type = "" # vasp, lammps
+        if os.path.exists('relaxation.json') or os.path.exists('property.json'):
+            # confirm task_type: relaxation, elastic, eos, etc...
+            # relaxtion : read relaxation.json
+            # others: read property.json
+            # then we can make sure remote_type is vasp or lammps
+            pass
+        elif os.path.exists('param.json'):
+            pass
 
     def run_jobs(self,
             resources,
@@ -32,14 +43,19 @@ class CloudServer:
             outlog = 'log',
             errlog = 'err'):
         cwd = os.getcwd()
-        print("CloudServer:", cwd, work_path, tasks)
+        # print("CloudServer:", cwd, work_path, tasks)
         dpgen_data = tail('record.dpgen', 1)
         current_iter = dpgen_data[0].split(' ')[0]
         current_stage = dpgen_data[0].split(' ')[1]
         # 0, 1, 2: make_train, run_train, post_train
         # 3, 4, 5: make_model_devi, run_model_devi, post_model_devi
         # 6, 7, 8: make_fp, run_fp, post_fp
-
+        if current_stage == '0':
+            stage = "train"
+        elif current_stage == '3':
+            stage = "model_devi"
+        elif current_stage == '6':
+            stage = "fp"
 
         for task in tasks:
             self.of = uuid.uuid1().hex + '.tgz'
@@ -65,11 +81,11 @@ class CloudServer:
 
             if os.path.exists(os.path.join(work_path, task, 'tag_upload')):
                 continue
-
+            # [iter]:1  |  [stage]:train  |  [task]:000
             # compress files in two folders, upload to oss and touch upload_tag, then remove local tarfile
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             upload_file_to_oss(remote_oss_dir, self.of)
-
+            dlog.info(" submit [iter]:{}  |  [stage]:{}  |  [task]:{}".format(current_iter, stage, task))
             os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
             os.remove(self.of)
 
@@ -79,12 +95,10 @@ class CloudServer:
                 input_data['previous_job_id'] = self.previous_job_id
                 with open('previous_job_id', 'w') as fp:
                     fp.write(str(self.previous_job_id))
-                print(self.previous_job_id)
             else:
                 previous_job_id = tail('previous_job_id', 1)[0]
                 input_data['previous_job_id'] = previous_job_id
                 submit_job(input_data, previous_job_id)
-                print(previous_job_id)
 
         while not self.all_finished(input_data, current_iter, current_stage):
             time.sleep(10)
@@ -104,12 +118,19 @@ def analyse_and_download(input_data, current_iter, current_stage):
     return_data = get_job_summary(input_data)
     current_iter = int(current_iter)
     current_data = [ii for ii in return_data if ii['iter'] == current_iter and ii['sub_stage'] == current_stage]
+    if current_stage == '0':
+        stage = "train"
+    elif current_stage == '3':
+        stage = "model_devi"
+    elif current_stage == '6':
+        stage = "fp"
     for ii in current_data:
         if os.path.exists(os.path.join(ii['local_dir'], "tag_download")):
             continue
         else:
             if ii['status'] == 2:
                 download_file_from_oss(ii['result'], ii['local_dir'])
+                dlog.info(" download [iter]:{}  |  [stage]:{}  |  [task]:{}".format(current_iter, stage, ii["task"]))
                 os.mknod(os.path.join(ii['local_dir'], 'tag_download'))
 
 
@@ -130,6 +151,7 @@ def get_job_summary(input_data):
                 tmp_data['sub_stage'] = res_input_data["sub_stage"]                        # '0', '3', '6'
                 tmp_data["local_dir"] = res_input_data["local_dir"]                        # 'iter.000000/01.model_devi/task.000.000009'
                 tmp_data["job_type"] = res_input_data["job_type"]                          # 'kit', 'lammps', 'fp'
+                tmp_data["task"] = res_input_data["task"]
                 tmp_data["status"] = ii["status"]                                          # 0, 1, 2 | unsubmitted, running, finished
                 tmp_data["result"] = ii["result"]                                          # oss_download_addr: "dpgen/699c2b26ed1011ea95c7a5aeac438cd3.download.tgz"
                 tmp_data["task_id"] = ii["task_id"]
@@ -150,7 +172,6 @@ def submit_job(input_data, previous_job_id=None):
     }
     if previous_job_id:
         data['previous_job_id'] = previous_job_id
-    print(data)
     url = 'http://39.98.150.188:5001/insert_job'
     headers = {'Content-Type': 'application/json'}
     time.sleep(0.2)
@@ -160,7 +181,7 @@ def submit_job(input_data, previous_job_id=None):
 
 def tar_dir(of, comm_files, task_files, comm_dir, task_dir,  dereference=True):
     cwd = os.getcwd()
-    print(cwd)
+    # print(cwd)
     with tarfile.open(of, "w:gz", dereference = dereference) as tar:
         os.chdir(comm_dir)
         for ii in comm_files:
@@ -210,7 +231,6 @@ def get_bucket():
     end_point = 'http://oss-cn-shenzhen.aliyuncs.com'
     bucket_name = "dpcloudserver"
     bucket = oss2.Bucket(auth, end_point, bucket_name)
-    print("get token successfully!")
     return bucket
 
 def upload_file_to_oss(oss_task_dir, zip_task_file):
@@ -239,7 +259,13 @@ def upload_file_to_oss(oss_task_dir, zip_task_file):
 def download_file_from_oss(oss_path, local_dir):
     bucket = get_bucket()
     local_file = oss_path.split('/')[-1]
-    bucket.get_object_to_file(oss_path, os.path.join(local_dir, local_file))
+    i = 1
+    while i < 5:
+        try:
+            bucket.get_object_to_file(oss_path, os.path.join(local_dir, local_file))
+            break
+        except Exception as e:
+            i += 1
     cwd = os.getcwd()
     os.chdir(local_dir)
     with tarfile.open(local_file, "r:gz") as tar:
