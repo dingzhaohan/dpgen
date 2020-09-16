@@ -11,23 +11,13 @@ import requests
 from dpgen import dlog
 
 class CloudServer:
-    def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources):
+    def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources, type="run"):
+	# type: run, autotest, simplily, init_surf, init_bulk...
         self.cloud_resources = cloud_resources
         self.root_job_id = -1
         self.work_path = work_path # iter.000000/02.fp
         self.run_tasks = run_tasks # ['task.000.000000', 'task.000.000001', 'task.000.000002', 'task.000.000003']
         self.ratio_failure = mdata_resources.get('ratio_failure', 0)
-
-    def decide_type(self):
-        remote_type = "" # vasp, lammps
-        if os.path.exists('relaxation.json') or os.path.exists('property.json'):
-            # confirm task_type: relaxation, elastic, eos, etc...
-            # relaxtion : read relaxation.json
-            # others: read property.json
-            # then we can make sure remote_type is vasp or lammps
-            pass
-        elif os.path.exists('param.json'):
-            pass
 
     def run_jobs(self,
             resources,
@@ -42,50 +32,114 @@ class CloudServer:
             mark_failure = False,
             outlog = 'log',
             errlog = 'err'):
-        cwd = os.getcwd()
-        # print("CloudServer:", cwd, work_path, tasks)
-        dpgen_data = tail('record.dpgen', 1)
-        current_iter = dpgen_data[0].split(' ')[0]
-        current_stage = dpgen_data[0].split(' ')[1]
+	job_info = {}
+	job_info["resources"] = resources
+	job_info["command"] = command
+	job_info["work_path"] = work_path
+	job_info["tasks"] = tasks
+	job_info["forward_common_files"] = forward_common_files
+	job_info["forward_task_files"] = forward_task_files
+	job_info["backward_task_files"] = backward_task_files
+
+        if self.type == 'run':
+	    job_info = self.get_run_info()
+            pass
+	elif self.type == 'autotest':
+	    self.get_autotest_info()
+	    pass
+	elif self.type == 'init_surf':
+	    pass
+	elif self.type == 'init_bulk':
+	    pass
+	elif self.type == 'simplify':
+	    pass
+
+	self.tar_upload_submit_tasks(job_info)
+
+        while not self.all_finished(input_data, current_iter, current_stage):
+            time.sleep(10)
+
+    def get_run_info(self):
+	run_data = tail('record.dpgen', 1)
+        current_iter = run_data[0].split(' ')[0]
+        current_stage = run_data[0].split(' ')[1]
         # 0, 1, 2: make_train, run_train, post_train
         # 3, 4, 5: make_model_devi, run_model_devi, post_model_devi
         # 6, 7, 8: make_fp, run_fp, post_fp
+	stage = ""
         if current_stage == '0':
             stage = "train"
         elif current_stage == '3':
             stage = "model_devi"
         elif current_stage == '6':
             stage = "fp"
+	job_info = {
+	    "type": "run",
+	    "current_iter": current_iter,
+	    "current_stage": current_stage,
+	    "max_iter": 100
+	}
+	return job_info
 
-        for task in tasks:
+    def get_autotest_info(self):
+        job_info = {
+            "type": "autotest",
+            "current_stage": "elastic", # relaxation, eos, etc...
+            "sub_type": "lammps"
+        }
+        return job_info
+
+    def get_initsurf_info(self):
+        job_info = {
+            "type": "initsurf",
+            "sub_type": "fp"
+        }
+        pass
+
+    def get_initbulk_info(self):
+        job_info = {
+            "type": "initbulk",
+            "sub_type": "lammps"
+        }
+        pass
+
+    def get_simplify_info(self):
+        job_info = {
+            "type": "simplify"
+        }
+        pass
+
+    def tar_upload_submit_tasks(self, job_info):
+        for task in job_info["tasks"]:
             self.of = uuid.uuid1().hex + '.tgz'
-            remote_oss_dir = 'dpgen/%s' % self.of
+            remote_oss_dir = '{}/{}'.format(job_info['type'], self.of)
             input_data = {}
             if os.path.exists('previous_job_id'):
                 input_data['previous_job_id'] = tail('previous_job_id', 1)[0]
             input_data['dpgen'] = True
             input_data['job_type'] = 'dpgen'
             input_data['job_resources'] = 'http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir
-            input_data['command'] = command[0]
-            input_data['backward_files'] = backward_task_files
-            input_data['local_dir'] = os.path.join(work_path, task)
-            input_data['task'] = task
-            input_data['sub_stage'] = current_stage # 0: train, 3: model_devi, 6: fp
+            input_data['command'] = job_info["command"][0]
+            input_data['backward_files'] = job_info["backward_task_files"]
+            input_data['local_dir'] = os.path.join(job_info["work_path"], job_info["task"])
+            input_data['task'] = job_info["task"]
+            input_data['sub_stage'] = job_info["current_stage"] # 0: train, 3: model_devi, 6: fp
             input_data['username'] = self.cloud_resources['username']
             input_data['password'] = self.cloud_resources['password']
             input_data['machine'] = {}
             input_data['machine']['resources'] = self.cloud_resources
-            for key, value in resources.items():
+            for key, value in job_info["resources"].items():
                 input_data['machine']['resources'][key] = value
             # for machine config, such as kernel, GPU etc...
 
-            if os.path.exists(os.path.join(work_path, task, 'tag_upload')):
+            if os.path.exists(os.path.join(job_info["work_path"], task, 'tag_upload')):
                 continue
-            # [iter]:1  |  [stage]:train  |  [task]:000
+
             # compress files in two folders, upload to oss and touch upload_tag, then remove local tarfile
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             upload_file_to_oss(remote_oss_dir, self.of)
-            dlog.info(" submit [iter]:{}  |  [stage]:{}  |  [task]:{}".format(current_iter, stage, task))
+            # TODO: finish dlog info
+            # dlog.info(" submit [stage]:{}  |  [task]:{}".format(stage, task))
             os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
             os.remove(self.of)
 
@@ -100,9 +154,78 @@ class CloudServer:
                 input_data['previous_job_id'] = previous_job_id
                 submit_job(input_data, previous_job_id)
 
-        while not self.all_finished(input_data, current_iter, current_stage):
-            time.sleep(10)
+    # 获取所有的jobs directory
+     def get_iterations(self, path):
+         result = ''
+         if path[-1] == '/' or path[-1] == '\\':
+             path = path[:-1]
+         for tmp_iter in os.popen('ls  %s/|grep "iter."' % path).read().split('\n'):
+             if not tmp_iter.split('.')[-1].isdigit():
+                 continue
+             try:
+                 tmp_result = os.popen('wc -l  %s/%s/02.fp/*.out|grep out' % (path, tmp_iter))
+                 tmp_result = tmp_result.read()
+             except:
+                 tmp_result = ''
+             if 'out' in tmp_result:
+                 result += tmp_result
+         return result
 
+    # 获取 work energy 信息
+     def get_work_energy(self, path):
+         if path[-1] == '/' or path[-1] == '\\':
+             path = path[:-1]
+         result = os.popen('wc -l  %s/iter.*/02.fp/data*/ener* |grep energy' % path)
+         result = result.read().strip()
+         return result
+
+     # 获取构型数据 和 最大迭代数据
+    def get_sys_configs(self, param_file='param.json'):
+         param_json = json.loads(open(param_file).read() )
+         max_iter = max(list(x['_idx'] for x in param_json['model_devi_jobs']))
+         sys_configs = param_json['sys_configs']
+         sys_info_dict = {}
+         count_0 = 0
+         for tmp_sys_info in sys_configs:
+             tmp_sys_info = tmp_sys_info[0].split('/')[-6].split('.')
+             if len(tmp_sys_info) == 1:
+                 tmp_sys_info = tmp_sys_info[0]
+             else:
+                 tmp_sys_info = tmp_sys_info[1]
+             count_0 += 1
+         sys_info_dict['max_iter'] = max_iter
+         return sys_info_dict
+
+     # 上传 构型和 iterations 信息
+     def post_iter_sys_configs(self, path, param_file='param.json'):
+         iterations_data = self.get_iterations(path=path)
+         energy_data = self.get_work_energy(path=path)
+         sys_configs = self.get_sys_configs(param_file)
+         json_data = {'iterations_data':iterations_data, 'sys_configs':sys_configs, 'energy_data':      energy_data}
+         return self.post_data(url='insert_iter_data', json_data=json_data)
+
+     # 获取lcurve out 误差信息
+     def post_lcurve_out(self, path):
+         #TODO 需要获取当前的lcurve 误差信息，可以用来减少误差上传量
+         if path[-1] == '/' or path[-1] == '\\':
+             path = path[:-1]
+         for tmp_iter in os.popen('ls  %s/|grep "iter."' % path).read().split('\n'):
+             if not tmp_iter.split('.')[-1].isdigit():
+                 continue
+             all_file = os.popen("ls -l -t --time-style='+%s'" + " %s/%s/00.train/00[0-3]/lcurve.out|grep -v 'No such file'" % (path, tmp_iter))
+             all_file = all_file.read()
+             if all_file == '':
+                 continue
+             all_file = all_file.strip().split('\n')
+             for line in all_file:
+                 time_0, path_doc = line.split(' ')[-2:]
+                 crawl_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                 data_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time_0)))
+                 data = open(path_doc).read()
+                 json_data = {'path':path_doc, 'lcurve_data':data}
+                 result = self.post_data(url='insert_lcurve_out', json_data=json_data)
+                 if result['result'] == 'error':
+                     print(path_doc)
 
     def all_finished(self, input_data, current_iter, current_stage):
         analyse_and_download(input_data, current_iter, current_stage)
