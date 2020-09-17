@@ -8,7 +8,7 @@ from dpgen.dispatcher.Slurm import Slurm
 from dpgen.dispatcher.LSF import LSF
 from dpgen.dispatcher.PBS import PBS
 from dpgen.dispatcher.Shell import Shell
-from dpgen.dispatcher.AWS import AWS 
+from dpgen.dispatcher.AWS import AWS
 from dpgen.dispatcher.JobStatus import JobStatus
 from dpgen import dlog
 from hashlib import sha1
@@ -27,12 +27,12 @@ def _split_tasks(tasks,
     assert(tot == len(tasks))
     return chunks
 
-    
+
 class Dispatcher(object):
     def __init__ (self,
                   remote_profile,
                   context_type = 'local',
-                  batch_type = 'slurm', 
+                  batch_type = 'slurm',
                   job_record = 'jr.json'):
         self.remote_profile = remote_profile
 
@@ -51,7 +51,7 @@ class Dispatcher(object):
         else :
             raise RuntimeError('unknown context')
         if batch_type == 'slurm':
-            self.batch = Slurm            
+            self.batch = Slurm
         elif batch_type == 'lsf':
             self.batch = LSF
         elif batch_type == 'pbs':
@@ -111,18 +111,18 @@ class Dispatcher(object):
         #     [os.path.basename(j) for j in tasks[i:i + group_size]] \
         #     for i in range(0, len(tasks), group_size)
         # ]
-        task_chunks = _split_tasks(tasks, group_size)    
+        task_chunks = _split_tasks(tasks, group_size)
         task_chunks_str = ['+'.join(ii) for ii in task_chunks]
         task_hashes = [sha1(ii.encode('utf-8')).hexdigest() for ii in task_chunks_str]
         job_record = JobRecord(work_path, task_chunks, fname = self.jrname)
         job_record.dump()
         nchunks = len(task_chunks)
-        
+
         job_list = []
-        for ii in range(nchunks) :            
+        for ii in range(nchunks) :
             cur_chunk = task_chunks[ii]
             cur_hash = task_hashes[ii]
-            if not job_record.check_finished(cur_hash):                
+            if not job_record.check_finished(cur_hash):
                 # chunk is not finished
                 # check if chunk is submitted
                 submitted = job_record.check_submitted(cur_hash)
@@ -140,7 +140,7 @@ class Dispatcher(object):
                     rjob['context'].upload('.',
                                            forward_common_files)
                     rjob['context'].upload(cur_chunk,
-                                           forward_task_files, 
+                                           forward_task_files,
                                            dereference = forward_task_deference)
 
                     rjob['context'].write_file(rjob['batch'].upload_tag_name, '')
@@ -161,9 +161,9 @@ class Dispatcher(object):
                 if 'cloud_resources' in self.remote_profile:
                     ip = self.remote_profile['hostname']
                     instance_id = self.remote_profile['instance_id']
-                job_record.record_remote_context(cur_hash,                                                 
-                                                 context.local_root, 
-                                                 context.remote_root, 
+                job_record.record_remote_context(cur_hash,
+                                                 context.local_root,
+                                                 context.remote_root,
                                                  job_uuid,
                                                  ip,
                                                  instance_id)
@@ -185,8 +185,8 @@ class Dispatcher(object):
         return job_handler
 
 
-    def all_finished(self, 
-                     job_handler, 
+    def all_finished(self,
+                     job_handler,
                      mark_failure,
                      clean=True):
         task_chunks = job_handler['task_chunks']
@@ -246,10 +246,10 @@ class JobRecord(object):
         self.valid_hash(chunk_hash)
         return self.record[chunk_hash]['context'] is not None
 
-    def record_remote_context(self, 
-                              chunk_hash, 
-                              local_root, 
-                              remote_root, 
+    def record_remote_context(self,
+                              chunk_hash,
+                              local_root,
+                              remote_root,
                               job_uuid,
                               ip=None,
                               instance_id=None):
@@ -311,7 +311,7 @@ class JobRecord(object):
             }
 
 
-def make_dispatcher(mdata, mdata_resource=None, work_path=None, run_tasks=None, group_size=None):
+def make_dispatcher(mdata, mdata_resource=None, work_path=None, run_tasks=None, group_size=None, jdata=None):
     if 'cloud_resources' in mdata:
         if mdata['cloud_resources']['cloud_platform'] == 'ali':
             from dpgen.dispatcher.ALI import ALI
@@ -322,9 +322,9 @@ def make_dispatcher(mdata, mdata_resource=None, work_path=None, run_tasks=None, 
             pass
         elif mdata['cloud_resources']['cloud_platform'] == 'cloud_server':
             from dpgen.dispatcher.CloudServer import CloudServer
-            dispatcher = CloudServer(mdata, mdata_resource, work_path, run_tasks, group_size, mdata['cloud_resources'])
+            dispatcher = CloudServer(mdata, mdata_resource, work_path, run_tasks, group_size, mdata['cloud_resources'], jdata)
             return dispatcher
-    else:    
+    else:
         hostname = mdata.get('hostname', None)
         #use_uuid = mdata.get('use_uuid', False)
         if hostname:
