@@ -110,10 +110,10 @@ class CloudServer:
         pass
 
     def tar_upload_submit_tasks(self, job_info):
+        input_data = {}
         for task in job_info["tasks"]:
             self.of = uuid.uuid1().hex + '.tgz'
             remote_oss_dir = '{}/{}'.format(job_info['type'], self.of)
-            input_data = {}
             if os.path.exists('previous_job_id'):
                 input_data['previous_job_id'] = tail('previous_job_id', 1)[0]
             work_path = job_info['work_path']
@@ -143,18 +143,20 @@ class CloudServer:
             # dlog.info(" submit [stage]:{}  |  [task]:{}".format(stage, task))
             os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
             os.remove(self.of)
-
+            print(os.getcwd())
             # all subtask belong to one dpgen job which has one job_id, for statistic
             if not os.path.exists('previous_job_id'):
                 self.previous_job_id = submit_job(input_data)
+                # print(1, self.previous_job_id)
                 input_data['previous_job_id'] = self.previous_job_id
                 with open('previous_job_id', 'w') as fp:
                     fp.write(str(self.previous_job_id))
             else:
                 previous_job_id = tail('previous_job_id', 1)[0]
+                # print(2, previous_job_id)
                 input_data['previous_job_id'] = previous_job_id
                 submit_job(input_data, previous_job_id)
-            return input_data
+        return input_data
 
     # 获取所有的jobs directory
     def get_iterations(self, path):
