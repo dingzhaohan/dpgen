@@ -15,7 +15,7 @@ class DispatcherList():
         self.mdata_resources = mdata_resources
         self.task_chunks = _split_tasks(run_tasks, group_size)
         self.nchunks = len(self.task_chunks)
-        self.nchunks_limit = int(self.mdata_machine.get("machine_upper_bound", self.nchunks))
+        self.nchunks_limit = min(int(self.mdata_machine.get("machine_upper_bound", self.nchunks)), self.nchunks)
         self.work_path = work_path
         self.cloud_resources = cloud_resources
         self.server_pool = []
@@ -83,6 +83,21 @@ class DispatcherList():
                     # if len(server_pool) > 0: make_dispatcher
                     # else: pass
                     self.create(ii)
+                    if self.dispatcher_list[ii]["dispatcher_status"] == "unsubmitted":
+                        dlog.info(self.dispatcher_list[ii]["entity"].ip)
+                        self.dispatcher_list[ii]["entity"].job_handler = self.dispatcher_list[ii]["dispatcher"].submit_jobs(resources,
+                                                                                                                        command,
+                                                                                                                        work_path,
+                                                                                                                        self.task_chunks[ii],
+                                                                                                                        group_size,
+                                                                                                                        forward_common_files,
+                                                                                                                        forward_task_files,
+                                                                                                                        backward_task_files,
+                                                                                                                        forward_task_deference,
+                                                                                                                        outlog,
+                                                                                                                        errlog)
+                        self.dispatcher_list[ii]["entity"].job_record = self.dispatcher_list[ii]["entity"].job_handler["job_record"]
+                        self.dispatcher_list[ii]["dispatcher_status"] = "running"
                 elif dispatcher_status == "terminated":
                     pass
             self.update()

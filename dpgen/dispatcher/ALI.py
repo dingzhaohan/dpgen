@@ -127,10 +127,8 @@ class ALI(DispatcherList):
             sys.exit()
 
     def update(self):
-        if len(self.server_pool) == 0:
-            self.server_pool = self.get_server_pool()
-            self.ip_pool = self.get_ip(self.server_pool)
-        else: pass
+        self.server_pool = self.get_server_pool()
+        self.ip_pool = self.get_ip(self.server_pool)
 
     # Derivate
     def catch_dispatcher_exception(self, ii):
