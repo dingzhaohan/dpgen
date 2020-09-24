@@ -52,14 +52,42 @@ class CloudServer:
         while not self.all_finished(input_data, job_info['current_iter'], job_info['current_stage']):
             time.sleep(10)
 
-        self.upload_summary_data(self.type)
+        self.upload_summary_data(job_info)
 
 
-    def upload_summary_data(task_type):
-        if task_type == 'run':
-            data_list = []
+    def upload_summary_data(self, job_info):
+        if os.path.exists('previous_job_id'):
+            self.previous_job_id = tail('previous_job_id', 1)[0]
+        if job_info['type'] == 'run':
+            headers = {'Content-Type': 'application/json'}
+            if job_info['current_stage'] == '0':
+                result = self.get_lcurve_out(job_info['current_iter'])
+                for ii in result:
+                    data = {
+                        "job_id": self.previous_job_id,
+                        "element": self.jdata.get("chemical_formula", "unknown"),
+                        "iter": job_info["current_iter"],
+                        "dir_path": ii['dir_path'],
+                        "lcurve_out": ii['data'],
+                        "force": 1
+                    }
+                    url = 'http://39.98.150.188:5003/insert_lcurve_data'
+                    res = requests.post(url=url, headers=headers, json=data)
+                print('post lcurve.out')
+            elif job_info['current_stage'] == '6':
+                result = self.get_iterations(job_info['current_iter'])
+                data = {
+                    "job_id": self.previous_job_id,
+                    "element": self.jdata.get("chemical_formula", "unknown"),
+                    "iter": job_info["current_iter"],
+                    "data_list": result,
+                    "force": 1
+                }
+                url = 'http://39.98.150.188:5003/insert_iter_data'
+                res = requests.post(url=url, headers=headers, json=data)
+                print("post get iterations", res.text)
 
-            pass
+            # post lcurve
         elif task_type == 'autotest':
             pass
 
@@ -162,34 +190,69 @@ class CloudServer:
                 submit_job(input_data, previous_job_id)
         return input_data
 
-    # 获取所有的jobs directory
-    def get_iterations(self, path):
+
+    def get_iterations(self, current_iter):
         result = ''
-        if path[-1] == '/' or path[-1] == '\\':
-            path = path[:-1]
-        for tmp_iter in os.popen('ls  %s/|grep "iter."' % path).read().split('\n'):
-            if not tmp_iter.split('.')[-1].isdigit():
-                continue
-            try:
-                tmp_result = os.popen('wc -l  %s/%s/02.fp/*.out|grep out' % (path, tmp_iter))
-                tmp_result = tmp_result.read()
-            except:
-                tmp_result = ''
-            if 'out' in tmp_result:
-                result += tmp_result
+        tmp_data = []
+        try:
+            tmp_result = os.popen('wc -l iter.%.06d/02.fp/*.out | grep out' % int(current_iter))
+            tmp_result = tmp_result.read()
+            print(tmp_result)
+            tmp_data = [[int(line.strip().split(' ')[0]), self.get_sys(line.strip().split(' ')[1]), int(line.split('.')[-2])] for line in tmp_result.strip().split('\n') if line]
+        except:
+            tmp_result = ''
+            print("post failed")
+        if 'out' in tmp_result:
+            result += tmp_result
+        strip = int(len(tmp_data) / 3)
+        candidate = tmp_data[:strip]
+        rest_accurate = tmp_data[strip:strip*2]
+        rest_failed = tmp_data[strip*2:]
+        data_list = []
+        tmp_dic = {}
+        for ii in range(len(candidate)):
+            if candidate[ii][1] in tmp_dic:
+                tmp_dic[candidate[ii][1]]["candidate"] += candidate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_accurate"] += rest_accurate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_failed"] += rest_failed[ii][0]
+                tmp_dic[candidate[ii][1]]["energy_raw"] += self.get_work_energy(current_iter, candidate[ii][2])
+            else:
+                tmp_dic[candidate[ii][1]] = {}
+                tmp_dic[candidate[ii][1]]["candidate"] = candidate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_accurate"] = rest_accurate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_failed"] = rest_failed[ii][0]
+                tmp_dic[candidate[ii][1]]["energy_raw"] = self.get_work_energy(current_iter, candidate[ii][2])
+        print(tmp_dic)
+        result = []
+        for key, value in tmp_dic.items():
+            tmp_dic = {}
+            tmp_dic['sys_configs'] = key
+            for key1, value1 in value.items():
+                tmp_dic[key1] = value1
+            result.append(tmp_dic)
+        print(result)
         return result
+
+    def get_sys(self, line):
+        sys_config_idx = int(line.strip().split('/')[-1].split('.')[-2])
+        print(self.jdata['sys_configs'][sys_config_idx][0])
+        tmp_data = self.jdata['sys_configs'][sys_config_idx][0].strip()
+        tmp_data_0 = tmp_data.split('/')
+        for ii in range(3):
+            if '01x01x01' in tmp_data_0[ii] or '02x02x02' in tmp_data_0[ii]:
+                return '/'.join(tmp_data_0[0:ii+1])
+        return ""
 
     # 获取 work energy 信息
-    def get_work_energy(self, path):
-        if path[-1] == '/' or path[-1] == '\\':
-            path = path[:-1]
-        result = os.popen('wc -l  %s/iter.*/02.fp/data*/ener* |grep energy' % path)
-        result = result.read().strip()
+    def get_work_energy(self, current_iter, sys_config_idx):
+        result = os.popen('wc -l  iter.%.06d/02.fp/data.%.03d/ener* |grep energy' % (int(current_iter), sys_config_idx))
+        result = int(result.read().strip().split(' ')[0])
         return result
 
+
      # 获取构型数据 和 最大迭代数据
-    def get_sys_configs(self, param_file='param.json'):
-        param_json = json.loads(open(param_file).read() )
+    def get_sys_configs(self):
+        param_json = self.jdata
         max_iter = max(list(x['_idx'] for x in param_json['model_devi_jobs']))
         sys_configs = param_json['sys_configs']
         sys_info_dict = {}
@@ -204,36 +267,20 @@ class CloudServer:
         sys_info_dict['max_iter'] = max_iter
         return sys_info_dict
 
-     # 上传 构型和 iterations 信息
-    def post_iter_sys_configs(self, path, param_file='param.json'):
-        iterations_data = self.get_iterations(path=path)
-        energy_data = self.get_work_energy(path=path)
-        sys_configs = self.get_sys_configs(param_file)
-        json_data = {'iterations_data':iterations_data, 'sys_configs':sys_configs, 'energy_data':      energy_data}
-        return self.post_data(url='insert_iter_data', json_data=json_data)
-
      # 获取lcurve out 误差信息
-    def post_lcurve_out(self, path):
+    def get_lcurve_out(self, current_iter):
         #TODO 需要获取当前的lcurve 误差信息，可以用来减少误差上传量
-        if path[-1] == '/' or path[-1] == '\\':
-            path = path[:-1]
-        for tmp_iter in os.popen('ls  %s/|grep "iter."' % path).read().split('\n'):
-            if not tmp_iter.split('.')[-1].isdigit():
-                continue
-            all_file = os.popen("ls -l -t --time-style='+%s'" + " %s/%s/00.train/00[0-3]/lcurve.out|grep -v 'No such file'" % (path, tmp_iter))
-            all_file = all_file.read()
-            if all_file == '':
-                continue
-            all_file = all_file.strip().split('\n')
-            for line in all_file:
-                time_0, path_doc = line.split(' ')[-2:]
-                crawl_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                data_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(time_0)))
-                data = open(path_doc).read()
-                json_data = {'path':path_doc, 'lcurve_data':data}
-                result = self.post_data(url='insert_lcurve_out', json_data=json_data)
-                if result['result'] == 'error':
-                    print(path_doc)
+        all_file = os.popen("ls iter.%.06d/00.train/00[0-3]/lcurve.out|grep -v 'No such file'" % int(current_iter))
+        all_file = all_file.read()
+        all_file = all_file.strip().split('\n')
+        data_list = []
+        for line in all_file:
+            data = open(line).read()
+            tmp_dic = {}
+            tmp_dic["dir_path"] = line.strip().split('/')[-2]
+            tmp_dic["data"] = data
+            data_list.append(tmp_dic)
+        return data_list
 
     def all_finished(self, input_data, current_iter, current_stage):
         analyse_and_download(input_data, current_iter, current_stage)
