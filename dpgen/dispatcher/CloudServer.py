@@ -11,8 +11,9 @@ import requests
 from dpgen import dlog
 
 class CloudServer:
-    def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources, ttype="run"):
+    def __init__(self, mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources, jdata=None, ttype="run"):
 	# type: run, autotest, simplily, init_surf, init_bulk...
+        self.jdata = jdata
         self.type = ttype
         self.cloud_resources = cloud_resources
         self.root_job_id = -1
@@ -34,6 +35,7 @@ class CloudServer:
             outlog = 'log',
             errlog = 'err'):
         job_info = {}
+        print("self.type", self.type)
         if self.type == 'run':
             job_info = self.get_run_info()
         elif self.type == 'autotest':
@@ -45,18 +47,21 @@ class CloudServer:
         elif self.type == 'simplify':
             pass
 
-        job_info["resources"] = resources
-        job_info["command"] = command
-        job_info["work_path"] = work_path
-        job_info["tasks"] = tasks
-        job_info["forward_common_files"] = forward_common_files
-        job_info["forward_task_files"] = forward_task_files
-        job_info["backward_task_files"] = backward_task_files
-        job_info["forward_task_dereference"] = forward_task_dereference
-        input_data = self.tar_upload_submit_tasks(job_info)
+        input_data = self.tar_upload_submit_tasks(resources, command, work_path, tasks, forward_common_files, forward_task_files, backward_task_files, forward_task_dereference, job_info)
 
         while not self.all_finished(input_data, job_info['current_iter'], job_info['current_stage']):
             time.sleep(10)
+
+        self.upload_summary_data(self.type)
+
+
+    def upload_summary_data(task_type):
+        if task_type == 'run':
+            data_list = []
+
+            pass
+        elif task_type == 'autotest':
+            pass
 
     def get_run_info(self):
         run_data = tail('record.dpgen', 1)
@@ -77,7 +82,7 @@ class CloudServer:
 	    "current_iter": current_iter,
 	    "current_stage": current_stage,
             "stage": stage,
-            "max_iter": 100
+            "max_iter": max(list(x['_idx'] for x in self.jdata['model_devi_jobs']))
         }
         return job_info
 
@@ -109,19 +114,18 @@ class CloudServer:
         }
         pass
 
-    def tar_upload_submit_tasks(self, job_info):
+    def tar_upload_submit_tasks(self, resources, command, work_path, tasks, forward_common_files, forward_task_files, backward_task_files, forward_task_dereference, job_info):
         input_data = {}
-        for task in job_info["tasks"]:
+        for task in tasks:
             self.of = uuid.uuid1().hex + '.tgz'
             remote_oss_dir = '{}/{}'.format(job_info['type'], self.of)
             if os.path.exists('previous_job_id'):
                 input_data['previous_job_id'] = tail('previous_job_id', 1)[0]
-            work_path = job_info['work_path']
             input_data['dpgen'] = True
             input_data['job_type'] = 'dpgen'
             input_data['job_resources'] = 'http://dpcloudserver.oss-cn-shenzhen.aliyuncs.com/' + remote_oss_dir
-            input_data['command'] = job_info["command"][0]
-            input_data['backward_files'] = job_info["backward_task_files"]
+            input_data['command'] = command[0]
+            input_data['backward_files'] = backward_task_files
             input_data['local_dir'] = os.path.join(work_path, task)
             input_data['task'] = task
             input_data['sub_stage'] = job_info["current_stage"] # 0: train, 3: model_devi, 6: fp
@@ -129,7 +133,7 @@ class CloudServer:
             input_data['password'] = self.cloud_resources['password']
             input_data['machine'] = {}
             input_data['machine']['resources'] = self.cloud_resources
-            for key, value in job_info["resources"].items():
+            for key, value in resources.items():
                 input_data['machine']['resources'][key] = value
             # for machine config, such as kernel, GPU etc...
 
@@ -137,7 +141,7 @@ class CloudServer:
                 continue
 
             # compress files in two folders, upload to oss and touch upload_tag, then remove local tarfile
-            tar_dir(self.of, job_info['forward_common_files'], job_info['forward_task_files'], work_path, os.path.join(work_path, task), job_info["forward_task_dereference"])
+            tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             upload_file_to_oss(remote_oss_dir, self.of)
             # TODO: finish dlog info
             # dlog.info(" submit [stage]:{}  |  [task]:{}".format(stage, task))
@@ -303,7 +307,6 @@ def submit_job(input_data, previous_job_id=None):
     headers = {'Content-Type': 'application/json'}
     time.sleep(0.2)
     res = requests.post(url=url, headers=headers, data=json.dumps(data))
-
     return res.json()['job_id']
 
 def tar_dir(of, comm_files, task_files, comm_dir, task_dir,  dereference=True):
