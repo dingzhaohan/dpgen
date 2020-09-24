@@ -35,7 +35,6 @@ class CloudServer:
             outlog = 'log',
             errlog = 'err'):
         job_info = {}
-        print("self.type", self.type)
         if self.type == 'run':
             job_info = self.get_run_info()
         elif self.type == 'autotest':
@@ -73,7 +72,6 @@ class CloudServer:
                     }
                     url = 'http://39.98.150.188:5003/insert_lcurve_data'
                     res = requests.post(url=url, headers=headers, json=data)
-                print('post lcurve.out')
             elif job_info['current_stage'] == '6':
                 result = self.get_iterations(job_info['current_iter'])
                 data = {
@@ -85,9 +83,7 @@ class CloudServer:
                 }
                 url = 'http://39.98.150.188:5003/insert_iter_data'
                 res = requests.post(url=url, headers=headers, json=data)
-                print("post get iterations", res.text)
 
-            # post lcurve
         elif task_type == 'autotest':
             pass
 
@@ -144,6 +140,7 @@ class CloudServer:
 
     def tar_upload_submit_tasks(self, resources, command, work_path, tasks, forward_common_files, forward_task_files, backward_task_files, forward_task_dereference, job_info):
         input_data = {}
+        input_data['type'] = job_info['type']
         for task in tasks:
             self.of = uuid.uuid1().hex + '.tgz'
             remote_oss_dir = '{}/{}'.format(job_info['type'], self.of)
@@ -171,25 +168,27 @@ class CloudServer:
             # compress files in two folders, upload to oss and touch upload_tag, then remove local tarfile
             tar_dir(self.of, forward_common_files, forward_task_files, work_path, os.path.join(work_path, task), forward_task_dereference)
             upload_file_to_oss(remote_oss_dir, self.of)
-            # TODO: finish dlog info
-            # dlog.info(" submit [stage]:{}  |  [task]:{}".format(stage, task))
+            self.dinfo_upload(job_info)
             os.mknod(os.path.join(work_path, task, 'tag_upload')) # avoid submit twice
             os.remove(self.of)
-            print(os.getcwd())
             # all subtask belong to one dpgen job which has one job_id, for statistic
             if not os.path.exists('previous_job_id'):
                 self.previous_job_id = submit_job(input_data)
-                # print(1, self.previous_job_id)
                 input_data['previous_job_id'] = self.previous_job_id
                 with open('previous_job_id', 'w') as fp:
                     fp.write(str(self.previous_job_id))
             else:
                 previous_job_id = tail('previous_job_id', 1)[0]
-                # print(2, previous_job_id)
                 input_data['previous_job_id'] = previous_job_id
                 submit_job(input_data, previous_job_id)
         return input_data
 
+    def dinfo_upload(self, job_info, task):
+        if job_info['type'] == 'run':
+            dlog.info(" submit [stage]:{}  |  [task]:{}".format(job_info['stage'], task))
+
+    def dinfo_download(self, input_data):
+        pass
 
     def get_iterations(self, current_iter):
         result = ''
@@ -197,11 +196,9 @@ class CloudServer:
         try:
             tmp_result = os.popen('wc -l iter.%.06d/02.fp/*.out | grep out' % int(current_iter))
             tmp_result = tmp_result.read()
-            print(tmp_result)
             tmp_data = [[int(line.strip().split(' ')[0]), self.get_sys(line.strip().split(' ')[1]), int(line.split('.')[-2])] for line in tmp_result.strip().split('\n') if line]
         except:
             tmp_result = ''
-            print("post failed")
         if 'out' in tmp_result:
             result += tmp_result
         strip = int(len(tmp_data) / 3)
@@ -222,7 +219,6 @@ class CloudServer:
                 tmp_dic[candidate[ii][1]]["rest_accurate"] = rest_accurate[ii][0]
                 tmp_dic[candidate[ii][1]]["rest_failed"] = rest_failed[ii][0]
                 tmp_dic[candidate[ii][1]]["energy_raw"] = self.get_work_energy(current_iter, candidate[ii][2])
-        print(tmp_dic)
         result = []
         for key, value in tmp_dic.items():
             tmp_dic = {}
@@ -230,12 +226,10 @@ class CloudServer:
             for key1, value1 in value.items():
                 tmp_dic[key1] = value1
             result.append(tmp_dic)
-        print(result)
         return result
 
     def get_sys(self, line):
         sys_config_idx = int(line.strip().split('/')[-1].split('.')[-2])
-        print(self.jdata['sys_configs'][sys_config_idx][0])
         tmp_data = self.jdata['sys_configs'][sys_config_idx][0].strip()
         tmp_data_0 = tmp_data.split('/')
         for ii in range(3):
@@ -243,14 +237,11 @@ class CloudServer:
                 return '/'.join(tmp_data_0[0:ii+1])
         return ""
 
-    # 获取 work energy 信息
     def get_work_energy(self, current_iter, sys_config_idx):
         result = os.popen('wc -l  iter.%.06d/02.fp/data.%.03d/ener* |grep energy' % (int(current_iter), sys_config_idx))
         result = int(result.read().strip().split(' ')[0])
         return result
 
-
-     # 获取构型数据 和 最大迭代数据
     def get_sys_configs(self):
         param_json = self.jdata
         max_iter = max(list(x['_idx'] for x in param_json['model_devi_jobs']))
@@ -267,9 +258,7 @@ class CloudServer:
         sys_info_dict['max_iter'] = max_iter
         return sys_info_dict
 
-     # 获取lcurve out 误差信息
     def get_lcurve_out(self, current_iter):
-        #TODO 需要获取当前的lcurve 误差信息，可以用来减少误差上传量
         all_file = os.popen("ls iter.%.06d/00.train/00[0-3]/lcurve.out|grep -v 'No such file'" % int(current_iter))
         all_file = all_file.read()
         all_file = all_file.strip().split('\n')
@@ -358,7 +347,6 @@ def submit_job(input_data, previous_job_id=None):
 
 def tar_dir(of, comm_files, task_files, comm_dir, task_dir,  dereference=True):
     cwd = os.getcwd()
-    # print(cwd)
     with tarfile.open(of, "w:gz", dereference = dereference) as tar:
         os.chdir(comm_dir)
         for ii in comm_files:
@@ -378,11 +366,9 @@ def tail(inputfile, num_of_lines):
         maxseekpoint = (filesize // blocksize)
         dat_file.seek((maxseekpoint-1)*blocksize)
     elif filesize :
-        #maxseekpoint = blocksize % filesize
         dat_file.seek(0, 0)
     lines =  dat_file.readlines()
     if lines :
-        #last_line = lines[-1].strip()
         last_line = lines[-num_of_lines:]
     dat_file.close()
     data = []
