@@ -23,7 +23,6 @@ class CloudServer:
         self.run_tasks = run_tasks # ['task.000.000000', 'task.000.000001', 'task.000.000002', 'task.000.000003']
         self.ratio_failure = mdata_resources.get('ratio_failure', 0)
 
-
     def run_jobs(self,
             resources,
             command,
@@ -121,6 +120,7 @@ class CloudServer:
             input_data['backward_files'] = backward_task_files
             input_data['local_dir'] = os.path.join(work_path, task)
             input_data['task'] = task
+            input_data['current_iter'] = job_info['current_iter']
             input_data['sub_stage'] = job_info["current_stage"] # 0: train, 3: model_devi, 6: fp
             input_data['username'] = self.cloud_resources['username']
             input_data['password'] = self.cloud_resources['password']

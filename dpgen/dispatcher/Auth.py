@@ -22,6 +22,7 @@ class DPGEN():
         self.remote_oss_url = self.endpoint[:7] + self.bucket + "." + self.endpoint[7:].strip("/")  + "/"
         self.headers = {'Content-Type': 'application/json'}
         self.cookies = ""
+        self.rerun = self.config_json.get("rerun", False)
 
     def login(self):
         json_data = {"username": self.username, "password": self.password}
@@ -75,6 +76,16 @@ class DPGEN():
         bucket_obj = oss2.Bucket(auth, self.endpoint, self.bucket)
         return bucket_obj
 
+    def rerun_dpgen(self):
+        url = "rerun_dpgen"
+        data = {
+            "last_job_id": 1,
+            "new_job_id": 2,
+            "iter": 4
+        }
+        res = self.post_url(url, data)
+
+
     def upload_file_to_oss(self, oss_task_dir, zip_task_file):
         bucket = self.get_bucket()
         i = 0
@@ -123,11 +134,17 @@ class DPGEN():
             'password': self.password,
             'input_data': input_data
         }
-
-        if previous_job_id:
-            data['previous_job_id'] = previous_job_id
         url = 'insert_job'
         time.sleep(0.2)
         self.login()
-        res = self.post_url(url, data)
+        if previous_job_id:
+            if self.rerun:
+                res = self.post_url(url, data)
+                new_job_id = res['data']['job_id']
+                self.rerun_dpgen(previous_job_id, new_job_id, input_data['current_iter'])
+            else:
+                data['previous_job_id'] = previous_job_id
+                res = self.post_url(url, data)
+        else:
+            res = self.post_url(url, data)
         return res['data']['job_id']
