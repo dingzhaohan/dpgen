@@ -281,7 +281,7 @@ class CloudServer:
         data = res['data']
         all_task = data['all_task']
         details = []
-        for ii in range(int(all_task/10)+1):
+        for ii in range(1, int(all_task/10)+1):
             url_1 = url + '&page=%s' % ii
             res = self.dpgen.get_url(url_1)
             while not res:
