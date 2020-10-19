@@ -279,9 +279,16 @@ class CloudServer:
         return_data = []
         res = self.dpgen.get_url(url)
         data = res['data']
-        details = res['details']
+        all_task = data['all_task']
+        details = []
+        for ii in range(int(all_task/10)+1):
+            url_1 = url + '&page=%s' % ii
+            res = self.dpgen.get_url(url_1)
+            while not res:
+                res = dpgen.get_url(url_1)
+            details += res['details']
         for ii in details:
-            res_input_data = eval(ii['input_data'])
+            res_input_data = ii['input_data']
             tmp_data = {}
             tmp_data['sub_stage'] = res_input_data["sub_stage"]                        # '0', '3', '6'
             tmp_data["local_dir"] = res_input_data["local_dir"]                        # 'iter.000000/01.model_devi/task.000.000009'
@@ -330,4 +337,13 @@ def tail(inputfile, num_of_lines):
 
 
 
+if __name__ == '__main__':
 
+    mdata = {}
+    mdata_resources = {}
+    work_path = {}
+    run_tasks = []
+    group_size = 1
+    cloud_resources = {}
+
+    CS = CloudServer(mdata, mdata_resources, work_path, run_tasks, group_size, cloud_resources, jdata=None, ttype="run")
