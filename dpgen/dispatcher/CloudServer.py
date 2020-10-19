@@ -285,7 +285,7 @@ class CloudServer:
             url_1 = url + '&page=%s' % ii
             res = self.dpgen.get_url(url_1)
             while not res:
-                res = dpgen.get_url(url_1)
+                res = self.dpgen.get_url(url_1)
             details += res['details']
         for ii in details:
             res_input_data = ii['input_data']
