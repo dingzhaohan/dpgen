@@ -22,6 +22,7 @@ class CloudServer:
         self.work_path = work_path # iter.000000/02.fp
         self.run_tasks = run_tasks # ['task.000.000000', 'task.000.000001', 'task.000.000002', 'task.000.000003']
         self.ratio_failure = mdata_resources.get('ratio_failure', 0)
+        print(self.ratio_failure)
 
     def run_jobs(self,
             resources,
@@ -111,7 +112,6 @@ class CloudServer:
         for task in tasks:
             self.of = uuid.uuid1().hex + '.tgz'
             remote_oss_dir = '{}/{}'.format(job_info['type'], self.of)
-            input_data['previous_job_id'] = self.dpgen.config_json['previous_job_id']
             input_data['dpgen'] = True
             input_data['job_type'] = 'dpgen'
             input_data['job_resources'] = self.dpgen.remote_oss_url + remote_oss_dir
@@ -142,14 +142,13 @@ class CloudServer:
             os.remove(self.of)
             # all subtask belong to one dpgen job which has one job_id, for statistic
             if not self.dpgen.config_json['previous_job_id']:
-                self.previous_job_id = self.dpgen.submit_job(input_data)
-                input_data['previous_job_id'] = self.previous_job_id
-                self.dpgen.config_json['previous_job_id'] = input_data['previous_job_id']
+                self.dpgen.config_json['previous_job_id'] = self.dpgen.submit_job(input_data)
                 self.dpgen.update_config()
             else:
+                # contain rerun condition.
                 previous_job_id = self.dpgen.config_json['previous_job_id']
-                input_data['previous_job_id'] = previous_job_id
-                self.dpgen.submit_job(input_data, previous_job_id)
+                self.dpgen.config_json['previous_job_id'] = self.dpgen.submit_job(input_data, previous_job_id)
+                self.dpgen.update_config()
         return input_data
 
     def dinfo_upload(self, job_info):
@@ -249,6 +248,7 @@ class CloudServer:
         for ii in self.run_tasks:
             if os.path.exists(os.path.join(self.work_path, ii, 'tag_download')):
                 finish_num += 1
+        print(finish_num, len(self.run_tasks),  finish_num / len(self.run_tasks))
         if finish_num / len(self.run_tasks) < (1 - self.ratio_failure): return False
         return True
 
@@ -274,7 +274,7 @@ class CloudServer:
 
 
     def get_job_summary(self, input_data):
-        url = 'get_job_details?job_id=%s&username=%s' % (input_data['previous_job_id'], input_data['username'])
+        url = 'get_job_details?job_id=%s&username=%s' % (self.dpgen.config_json['previous_job_id'], input_data['username'])
         time.sleep(0.2)
         return_data = []
         res = self.dpgen.get_url(url)
