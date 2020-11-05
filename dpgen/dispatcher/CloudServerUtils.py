@@ -1,16 +1,99 @@
-import uuid
-import os
-import sys
-import oss2
+
+import requests, json, tarfile, zipfile, time, oss2, os, sys
 from oss2 import SizedFileAdapter, determine_part_size
 from oss2.models import PartInfo
-import json
-import time
-import tarfile
-import requests
 from dpgen import dlog
+class DPLibray(object):
+    def __init__(self, jdata, current_iter, current_stage):
+        self.jdata = jdata
+        self.current_iter = int(current_iter)
+        self.current_stage = current_stage
 
-class DPGEN():
+    def get_iterations(self):
+        result = ''
+        tmp_data = []
+        try:
+            tmp_result = os.popen('wc -l iter.%.06d/02.fp/*.out | grep out' % self.current_iter)
+            tmp_result = tmp_result.read()
+            tmp_data = [[int(line.strip().split(' ')[0]), self.get_sys(line.strip().split(' ')[1]), int(line.split('.')[-2])] for line in tmp_result.strip().split('\n') if line]
+        except:
+            tmp_result = ''
+        if 'out' in tmp_result:
+            result += tmp_result
+        strip = int(len(tmp_data) / 3)
+        candidate = tmp_data[:strip]
+        rest_accurate = tmp_data[strip:strip*2]
+        rest_failed = tmp_data[strip*2:]
+        data_list = []
+        tmp_dic = {}
+        for ii in range(len(candidate)):
+            if candidate[ii][1] in tmp_dic:
+                tmp_dic[candidate[ii][1]]["candidate"] += candidate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_accurate"] += rest_accurate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_failed"] += rest_failed[ii][0]
+                tmp_dic[candidate[ii][1]]["energy_raw"] += self.get_work_energy(candidate[ii][2])
+            else:
+                tmp_dic[candidate[ii][1]] = {}
+                tmp_dic[candidate[ii][1]]["candidate"] = candidate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_accurate"] = rest_accurate[ii][0]
+                tmp_dic[candidate[ii][1]]["rest_failed"] = rest_failed[ii][0]
+                tmp_dic[candidate[ii][1]]["energy_raw"] = self.get_work_energy(candidate[ii][2])
+        result = []
+        for key, value in tmp_dic.items():
+            tmp_dic = {}
+            tmp_dic['sys_configs'] = key
+            for key1, value1 in value.items():
+                tmp_dic[key1] = value1
+            result.append(tmp_dic)
+        return result
+
+    def get_sys(self, line):
+        sys_config_idx = int(line.strip().split('/')[-1].split('.')[-2])
+        tmp_data = self.jdata['sys_configs'][sys_config_idx][0].strip()
+        tmp_data_0 = tmp_data.split('/')
+        for ii in range(3):
+            if '01x01x01' in tmp_data_0[ii] or '02x02x02' in tmp_data_0[ii]:
+                return '/'.join(tmp_data_0[0:ii+1])
+        return ""
+
+    def get_work_energy(self, sys_config_idx):
+        result = os.popen('wc -l  iter.%.06d/02.fp/data.%.03d/ener* |grep energy' % (self.current_iter, sys_config_idx))
+        result = int(result.read().strip().split(' ')[0])
+        return result
+
+
+    def get_sys_configs(self):
+        param_json = self.jdata
+        max_iter = max(list(x['_idx'] for x in param_json['model_devi_jobs']))
+        sys_configs = param_json['sys_configs']
+        sys_info_dict = {}
+        count_0 = 0
+        for tmp_sys_info in sys_configs:
+            tmp_sys_info = tmp_sys_info[0].split('/')[-6].split('.')
+            if len(tmp_sys_info) == 1:
+                tmp_sys_info = tmp_sys_info[0]
+            else:
+                tmp_sys_info = tmp_sys_info[1]
+            count_0 += 1
+        sys_info_dict['max_iter'] = max_iter
+        return sys_info_dict
+
+    def get_lcurve_out(self):
+        all_file = os.popen("ls iter.%.06d/00.train/00[0-3]/lcurve.out|grep -v 'No such file'" % self.current_iter)
+        all_file = all_file.read()
+        all_file = all_file.strip().split('\n')
+        data_list = []
+        for line in all_file:
+            data = open(line).read()
+            tmp_dic = {}
+            tmp_dic["dir_path"] = line.strip().split('/')[-2]
+            tmp_dic["data"] = data
+            data_list.append(tmp_dic)
+        return data_list
+
+
+
+class Auth(object):
     def __init__(self):
         self.config_json = eval(open("./config.json").read())
         # self.config_json['previous_job_id'] = -1
@@ -153,7 +236,52 @@ class DPGEN():
             res = self.post_url(url, data)
         return res['data']['job_id']
 
+class Utils(object):
+    def __init__(self):
+        pass
 
-if __name__ == '__main__':
-    dpgen = DPGEN()
-    dpgen.rerun_dpgen(10178, 99999, 2)
+    def dinfo_upload(self, job_info):
+        if job_info['type'] == 'run':
+            dlog.info(" submit [stage]:{}  |  [task]:{}".format(job_info['stage'], job_info['task']))
+        elif job_info['type'] == 'autotest':
+            pass
+
+    def dinfo_download(self, input_data):
+        pass
+
+
+def tar_dir(of, comm_files, task_files, comm_dir, tasks):
+    cwd = os.getcwd()
+    print(task_files)
+    task_files.append('task.json')
+    print("tar_dir, cwd", cwd)
+    print("work_dir", comm_dir)
+    with tarfile.open(of, "w:gz") as tar:
+        os.chdir(os.path.join(cwd, comm_dir))
+        for ii in comm_files:
+            tar.add(ii)
+        for task in tasks:
+            with open(os.path.join(task, 'task.json'), 'w') as fp:
+                fp.write(task)
+            for ii in task_files:
+                tar.add(os.path.join(task, ii))
+    os.chdir(cwd)
+
+def tail(inputfile, num_of_lines):
+    filesize = os.path.getsize(inputfile)
+    blocksize = 1024
+    dat_file = open(inputfile, 'r')
+    last_line = ""
+    if filesize > blocksize :
+        maxseekpoint = (filesize // blocksize)
+        dat_file.seek((maxseekpoint-1)*blocksize)
+    elif filesize :
+        dat_file.seek(0, 0)
+    lines =  dat_file.readlines()
+    if lines :
+        last_line = lines[-num_of_lines:]
+    dat_file.close()
+    data = []
+    for line in last_line:
+        data.append(line.replace('\n', ''))
+    return data
