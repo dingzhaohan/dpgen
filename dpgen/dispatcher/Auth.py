@@ -52,7 +52,7 @@ class DPGEN():
                 res = requests.get(url, params=kwargs, headers=self.headers, cookies=self.cookies, timeout=3)
                 return res.json()
             except Exception as e:
-                dlog.error("get url %s error: %s" % (url, str(e)))
+                print("get url %s error: %s" % (url, str(e)))
         return {}
 
     def post_url(self, url, json_data):
@@ -63,7 +63,7 @@ class DPGEN():
                 res = requests.post(url, json=json_data, headers=self.headers, cookies=self.cookies, timeout=10)
                 return res.json()
             except Exception as e:
-                dlog.error("post url %s error: %s" % (url, str(e)))
+                print("post url %s error: %s" % (url, str(e)))
         return {}
 
     def get_bucket(self):
@@ -136,7 +136,6 @@ class DPGEN():
         }
         url = 'insert_job'
         time.sleep(0.2)
-        self.login()
         if previous_job_id:
             if self.rerun:
                 res = self.post_url(url, data)
