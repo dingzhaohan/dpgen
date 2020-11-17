@@ -22,7 +22,6 @@ class CloudServer:
         self.work_path = work_path # iter.000000/02.fp
         self.run_tasks = run_tasks # ['task.000.000000', 'task.000.000001', 'task.000.000002', 'task.000.000003']
         self.ratio_failure = mdata_resources.get('ratio_failure', 0)
-        print(self.ratio_failure)
 
     def run_jobs(self,
             resources,
@@ -41,6 +40,7 @@ class CloudServer:
         if self.type == 'run':
             job_info = self.get_run_info()
 
+        self.dpgen.login()
         input_data = self.tar_upload_submit_tasks(resources, command, work_path, tasks, forward_common_files, forward_task_files, backward_task_files, forward_task_dereference, job_info)
 
         while not self.all_finished(input_data, job_info['current_iter'], job_info['current_stage']):
@@ -106,6 +106,12 @@ class CloudServer:
         }
         return job_info
 
+    def get_autotest_info(self):
+        job_info = {
+            "type": "autotest",
+            "stage": ""
+        }
+
     def tar_upload_submit_tasks(self, resources, command, work_path, tasks, forward_common_files, forward_task_files, backward_task_files, forward_task_dereference, job_info):
         input_data = {}
         input_data['type'] = job_info['type']
@@ -120,10 +126,10 @@ class CloudServer:
             input_data['backward_files'] = backward_task_files
             input_data['local_dir'] = os.path.join(work_path, task)
             input_data['task'] = task
-            input_data['current_iter'] = job_info['current_iter']
-            input_data['sub_stage'] = job_info["current_stage"] # 0: train, 3: model_devi, 6: fp
-            input_data['username'] = self.cloud_resources['username']
-            input_data['password'] = self.cloud_resources['password']
+            input_data['current_iter'] = job_info.get('current_iter', "")
+            input_data['sub_stage'] = job_info.get("current_stage", "") # 0: train, 3: model_devi, 6: fp
+            input_data['username'] = self.dpgen.config_json['username']
+            input_data['password'] = self.dpgen.config_json['password']
             input_data['machine'] = {}
             input_data['machine']['resources'] = self.cloud_resources
             for key, value in resources.items():
@@ -242,13 +248,11 @@ class CloudServer:
         return data_list
 
     def all_finished(self, input_data, current_iter, current_stage):
-        self.dpgen.login()
         self.analyse_and_download(input_data, current_iter, current_stage)
         finish_num = 0
         for ii in self.run_tasks:
             if os.path.exists(os.path.join(self.work_path, ii, 'tag_download')):
                 finish_num += 1
-        print(finish_num, len(self.run_tasks),  finish_num / len(self.run_tasks))
         if finish_num / len(self.run_tasks) < (1 - self.ratio_failure): return False
         return True
 
@@ -281,11 +285,12 @@ class CloudServer:
         data = res['data']
         all_task = data['all_task']
         details = []
-        for ii in range(1, int(all_task/10)+1):
+        for ii in range(1, int(all_task/10)+2):
             url_1 = url + '&page=%s' % ii
             res = self.dpgen.get_url(url_1)
-            while not res:
+            while not res.get('details', ''):
                 res = self.dpgen.get_url(url_1)
+                time.sleep(0.5)
             details += res['details']
         for ii in details:
             res_input_data = ii['input_data']
