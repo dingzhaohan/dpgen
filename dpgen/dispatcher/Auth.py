@@ -26,15 +26,16 @@ class DPGEN():
 
     def login(self):
         json_data = {"username": self.username, "password": self.password}
+        self.login_status = False
         for i in range(5):
-            res = requests.post(self.base_url + 'login', json=json_data)
-            if res.json()['result'] == 1:
-                login_status = True
+            res = requests.post(self.base_url + 'account/login', json=json_data)
+            if res.json()['code'] == "0000":
+                self.login_status = True
                 cookies = requests.utils.dict_from_cookiejar(res.cookies)
                 self.cookies = cookies
                 break
             time.sleep(1)
-        if login_status == True:
+        if self.login_status == True:
             print("welcome ", self.username, "login successfully!", time.ctime())
         else:
             print("login failed, please check network or username and password")
@@ -50,9 +51,10 @@ class DPGEN():
             time.sleep(1)
             try:
                 res = requests.get(url, params=kwargs, headers=self.headers, cookies=self.cookies, timeout=3)
-                return res.json()
+                return res.json()['data']
             except Exception as e:
                 print("get url %s error: %s" % (url, str(e)))
+                print(kwargs)
         return {}
 
     def post_url(self, url, json_data):
@@ -67,11 +69,15 @@ class DPGEN():
         return {}
 
     def get_bucket(self):
-        url = "get_sts_token"
+        url = "data/get_sts_token"
         oss_info = self.get_url(url)
+        # print(oss_info)
+        if 'SecurityToken' not in oss_info:
+            return -1
         key_id = oss_info['AccessKeyId']
         key_secret = oss_info['AccessKeySecret']
         token = oss_info['SecurityToken']
+
         auth = oss2.StsAuth(key_id, key_secret, token)
         bucket_obj = oss2.Bucket(auth, self.endpoint, self.bucket)
         return bucket_obj
@@ -108,7 +114,29 @@ class DPGEN():
                 break
             except:
                 i += 1
+    '''
 
+    def upload_file_to_oss(self, oss_task_dir, zip_task_file):
+        bucket = self.get_bucket()
+        total_size = os.path.getsize(zip_task_file)
+        # determine_part_size方法用于确定分片大小。
+        part_size = determine_part_size(total_size, preferred_size=1000 * 1024)
+        upload_id = bucket.init_multipart_upload(oss_task_dir).upload_id
+        parts = []
+        with open(zip_task_file, 'rb') as fileobj:
+            part_number = 1
+            offset = 0
+            while offset < total_size:
+                print("上传进度:", str((offset * 100) / (total_size + 1))[:5] + "%" )
+                num_to_upload = min(part_size, total_size - offset)
+                # 调用SizedFileAdapter(fileobj, size)方法会生成一个新的文件对象，重新计算起始追加位置。
+                result = bucket.upload_part(oss_task_dir, upload_id, part_number, SizedFileAdapter(fileobj, num_to_upload))
+                parts.append(PartInfo(part_number, result.etag))
+                offset += num_to_upload
+                part_number += 1
+        self.bucket.complete_multipart_upload(oss_task_dir, upload_id, parts)
+        return 1
+    '''
     def download_file_from_oss(self, oss_path, local_dir):
         bucket = self.get_bucket()
         local_file = oss_path.split('/')[-1]
@@ -134,14 +162,14 @@ class DPGEN():
             'password': self.password,
             'input_data': input_data
         }
-        url = 'insert_job'
+        url = 'data/insert_job'
         time.sleep(0.2)
         if previous_job_id:
             if self.rerun:
                 res = self.post_url(url, data)
                 new_job_id = res['data']['job_id']
                 self.rerun_dpgen(previous_job_id, new_job_id, input_data['current_iter'])
-                print(previous_job_id, new_job_id, input_data['current_iter'])
+                #print(previous_job_id, new_job_id, input_data['current_iter'])
                 self.rerun = 0
                 self.config_json['rerun'] = 0
                 self.update_config()
@@ -155,4 +183,5 @@ class DPGEN():
 
 if __name__ == '__main__':
     dpgen = DPGEN()
-    dpgen.rerun_dpgen(10178, 99999, 2)
+    #dpgen.rerun_dpgen(10178, 99999, 2)
+    dpgen.upload_file_to_oss('run/0f1d75603e9111ebabe5eb901ec5cb54.tgz', '/home/jiaojunyu/CH4/0f1d75603e9111ebabe5eb901ec5cb54.tgz')

@@ -63,7 +63,7 @@ class CloudServer:
                         "lcurve_out": ii['data'],
                         "force": 1
                     }
-                    url = 'insert_lcurve_data'
+                    url = 'data/insert_lcurve_data'
                     res = self.dpgen.post_url(url, data)
             if int(job_info['current_iter']) > 0 and job_info['current_stage'] == '0':
                 try:
@@ -75,7 +75,7 @@ class CloudServer:
                         "data_list": result,
                         "force": 1
                     }
-                    url = 'insert_iter_data'
+                    url = 'data/insert_iter_data'
                     res = self.dpgen.post_url(url, data)
                 except Exception as e:
                     pass
@@ -92,11 +92,11 @@ class CloudServer:
         # 6, 7, 8: make_fp, run_fp, post_fp
         stage = ""
         if current_stage == '0':
-            stage = "train"
+            stage = "kit"
         elif current_stage == '3':
-            stage = "model_devi"
+            stage = "lammps"
         elif current_stage == '6':
-            stage = "fp"
+            stage = "vasp"
         job_info = {
 	    "type": "run",
 	    "current_iter": current_iter,
@@ -128,6 +128,7 @@ class CloudServer:
             input_data['task'] = task
             input_data['current_iter'] = job_info.get('current_iter', "")
             input_data['sub_stage'] = job_info.get("current_stage", "") # 0: train, 3: model_devi, 6: fp
+            input_data['stage'] = job_info['stage']
             input_data['username'] = self.dpgen.config_json['username']
             input_data['password'] = self.dpgen.config_json['password']
             input_data['machine'] = {}
@@ -278,18 +279,22 @@ class CloudServer:
 
 
     def get_job_summary(self, input_data):
-        url = 'get_job_details?job_id=%s&username=%s' % (self.dpgen.config_json['previous_job_id'], input_data['username'])
+        url = 'data/get_job_details'
         time.sleep(0.2)
         return_data = []
-        res = self.dpgen.get_url(url)
+        res = self.dpgen.get_url(url, job_id=self.dpgen.config_json["previous_job_id"])
         data = res['data']
         all_task = data['all_task']
         details = []
-        for ii in range(1, int(all_task/10)+2):
-            url_1 = url + '&page=%s' % ii
-            res = self.dpgen.get_url(url_1)
+        i = 0
+        tmp_count = 0
+        while True:
+            tmp_count = i * 10
+            if tmp_count >= all_task: break
+            i += 1
+            res = self.dpgen.get_url(url, job_id=self.dpgen.config_json["previous_job_id"], page=i)
             while not res.get('details', ''):
-                res = self.dpgen.get_url(url_1)
+                res = self.dpgen.get_url(url, job_id=self.dpgen.config_json["previous_job_id"], page=i)
                 time.sleep(0.5)
             details += res['details']
         for ii in details:
