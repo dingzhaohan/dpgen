@@ -50,7 +50,7 @@ from dpgen.generator.lib.pwmat import make_pwmat_input_user_dict
 from dpgen.generator.lib.pwmat import input_upper
 from dpgen.generator.lib.siesta import make_siesta_input
 from dpgen.generator.lib.gaussian import make_gaussian_input, take_cluster
-from dpgen.generator.lib.cp2k import make_cp2k_input, make_cp2k_xyz
+from dpgen.generator.lib.cp2k import make_cp2k_input, make_cp2k_input_from_external, make_cp2k_xyz
 from dpgen.generator.lib.ele_temp import NBandsEsti
 from dpgen.remote.RemoteJob import SSHSession, JobStatus, SlurmJob, PBSJob, LSFJob, CloudMachineJob, awsMachineJob
 from dpgen.remote.group_jobs import ucloud_submit_jobs, aws_submit_jobs
@@ -197,12 +197,20 @@ def make_train (iter_index,
     training_iter0_model = jdata.get('training_iter0_model_path', [])
     training_init_model = jdata.get('training_init_model', False)
     training_reuse_iter = jdata.get('training_reuse_iter')
-    training_reuse_old_ratio = jdata.get('training_reuse_old_ratio', 0.2)
+    training_reuse_old_ratio = jdata.get('training_reuse_old_ratio', None)
     training_reuse_stop_batch = jdata.get('training_reuse_stop_batch', 400000)
     training_reuse_start_lr = jdata.get('training_reuse_start_lr', 1e-4)
     training_reuse_start_pref_e = jdata.get('training_reuse_start_pref_e', 0.1)
     training_reuse_start_pref_f = jdata.get('training_reuse_start_pref_f', 100)
     model_devi_activation_func = jdata.get('model_devi_activation_func', None)
+
+    if training_reuse_iter is not None and training_reuse_old_ratio is None:
+        raise RuntimeError("training_reuse_old_ratio not found but is mandatory when using init-model (training_reuse_iter is detected in param).\n" \
+        "It defines the ratio of the old-data picking probability to the all-data(old-data plus new-data) picking probability in training after training_reuse_iter.\n" \
+        "Denoting the index of the current iter as N (N >= training_reuse_iter ), old-data refers to those existed before the N-1 iter, and new-data refers to that obtained by the N-1 iter.\n" \
+        "A recommended strategy is making the new-to-old ratio close to 10 times of the default value, to reasonably increase the sensitivity of the model to the new-data.\n" \
+        "By default, the picking probability of data from one system or one iter is proportional to the number of batches (the number of frames divided by batch_size) of that systems or iter.\n" \
+        "Detailed discussion about init-model (in Chinese) please see https://mp.weixin.qq.com/s/qsKMZ0j270YhQKvwXUiFvQ")
 
     if iter_index > 0 and _check_empty_iter(iter_index-1, fp_task_min) :
         log_task('prev data is empty, copy prev model')
@@ -616,6 +624,30 @@ def parse_cur_job_revmat(cur_job, use_plm = False):
     return revise_keys, revise_matrix, n_lmp_keys
 
 
+def parse_cur_job_sys_revmat(cur_job, sys_idx, use_plm=False):
+    templates = [cur_job['template']['lmp']]
+    if use_plm:
+        templates.append(cur_job['template']['plm'])
+    sys_revise_keys = []
+    sys_revise_values = []
+    if 'sys_rev_mat' not in cur_job.keys():
+        cur_job['sys_rev_mat'] = {}
+    local_rev = cur_job['sys_rev_mat'].get(str(sys_idx), {})
+    if 'lmp' not in local_rev.keys():
+        local_rev['lmp'] = {}
+    for ii in local_rev['lmp'].keys():
+        sys_revise_keys.append(ii)
+        sys_revise_values.append(local_rev['lmp'][ii])
+    n_sys_lmp_keys = len(sys_revise_keys)
+    if use_plm:
+        if 'plm' not in local_rev.keys():
+            local_rev['plm'] = {}
+        for ii in local_rev['plm'].keys():
+            sys_revise_keys.append(ii)
+            sys_revise_values.append(local_rev['plm'][ii])
+    sys_revise_matrix = expand_matrix_values(sys_revise_values)
+    return sys_revise_keys, sys_revise_matrix, n_sys_lmp_keys
+
 def find_only_one_key(lmp_lines, key):
     found = []
     for idx in range(len(lmp_lines)):
@@ -785,8 +817,30 @@ def _make_model_devi_revmat(iter_index, jdata, mdata, conf_systems):
         conf_counter = 0
         task_counter = 0
         for cc in ss :
-            for ii in range(len(rev_mat)):
-                rev_item = rev_mat[ii]
+            sys_rev = cur_job.get('sys_rev_mat', None)
+            total_rev_keys = rev_keys
+            total_rev_mat = rev_mat
+            total_num_lmp = num_lmp
+            if sys_rev is not None:
+                total_rev_mat = []
+                sys_rev_keys, sys_rev_mat, sys_num_lmp = parse_cur_job_sys_revmat(cur_job,
+                                                                                  sys_idx=sys_idx[sys_counter],
+                                                                                  use_plm=use_plm)
+                _lmp_keys = rev_keys[:num_lmp] + sys_rev_keys[:sys_num_lmp]
+                if use_plm:
+                    _plm_keys = rev_keys[num_lmp:] + sys_rev_keys[sys_num_lmp:]
+                    _lmp_keys += _plm_keys
+                total_rev_keys = _lmp_keys
+                total_num_lmp = num_lmp + sys_num_lmp
+                for pub in rev_mat:
+                    for pri in sys_rev_mat:
+                        _lmp_mat = pub[:num_lmp] + pri[:sys_num_lmp]
+                        if use_plm:
+                            _plm_mat = pub[num_lmp:] + pri[sys_num_lmp:]
+                            _lmp_mat += _plm_mat
+                        total_rev_mat.append(_lmp_mat)
+            for ii in range(len(total_rev_mat)):
+                total_rev_item = total_rev_mat[ii]
                 task_name = make_model_devi_task_name(sys_idx[sys_counter], task_counter)
                 conf_name = make_model_devi_conf_name(sys_idx[sys_counter], conf_counter) + '.lmp'
                 task_path = os.path.join(work_path, task_name)
@@ -806,14 +860,20 @@ def _make_model_devi_revmat(iter_index, jdata, mdata, conf_systems):
                     lmp_lines = fp.readlines()
                 lmp_lines = revise_lmp_input_model(lmp_lines, task_model_list, trj_freq, deepmd_version = deepmd_version)
                 lmp_lines = revise_lmp_input_dump(lmp_lines, trj_freq)
-                lmp_lines = revise_by_keys(lmp_lines, rev_keys[:num_lmp], rev_item[:num_lmp])
+                lmp_lines = revise_by_keys(
+                    lmp_lines, total_rev_keys[:total_num_lmp], total_rev_item[:total_num_lmp]
+                )
                 # revise input of plumed
                 if use_plm:
                     lmp_lines = revise_lmp_input_plm(lmp_lines, 'input.plumed')
                     shutil.copyfile(plm_templ, 'input.plumed')
                     with open('input.plumed') as fp:
                         plm_lines = fp.readlines()
-                    plm_lines = revise_by_keys(plm_lines, rev_keys[num_lmp:], rev_item[num_lmp:])
+                    # allow using the same list as lmp
+                    # user should not use the same key name for plm
+                    plm_lines = revise_by_keys(
+                        plm_lines, total_rev_keys, total_rev_item
+                    )
                     with open('input.plumed', 'w') as fp:
                         fp.write(''.join(plm_lines))
                     if use_plm_path:
@@ -823,7 +883,7 @@ def _make_model_devi_revmat(iter_index, jdata, mdata, conf_systems):
                     fp.write(''.join(lmp_lines))
                 with open('job.json', 'w') as fp:
                     job = {}
-                    for ii,jj in zip(rev_keys, rev_item) : job[ii] = jj
+                    for ii,jj in zip(total_rev_keys, total_rev_item) : job[ii] = jj
                     json.dump(job, fp, indent = 4)
                 os.chdir(cwd_)
                 task_counter += 1
@@ -964,7 +1024,7 @@ def run_model_devi (iter_index,
 
     all_task = glob.glob(os.path.join(work_path, "task.*"))
     all_task.sort()
-    command = lmp_exec + " -i input.lammps"
+    command = "{ if [ ! -f dpgen.restart.10000 ]; then %s -i input.lammps -v restart 0; else %s -i input.lammps -v restart 1; fi }" % (lmp_exec, lmp_exec)
     commands = [command]
 
     fp = open (os.path.join(work_path, 'cur_job.json'), 'r')
@@ -1646,6 +1706,11 @@ def make_fp_cp2k (iter_index,
     work_path = os.path.join(iter_name, fp_name)
     if 'user_fp_params' in jdata.keys() :
         fp_params = jdata['user_fp_params']
+    # some users might use own inputs
+    # specify the input path string
+    elif 'external_input_path' in jdata.keys() :
+        fp_params = None
+        exinput_path = os.path.abspath(jdata['external_input_path'])
     else:
         fp_params = jdata['fp_params']
     cwd = os.getcwd()
@@ -1653,7 +1718,12 @@ def make_fp_cp2k (iter_index,
         os.chdir(ii)
         sys_data = dpdata.System('POSCAR').data
         # make input for every task
-        cp2k_input = make_cp2k_input(sys_data, fp_params)
+        # if fp_params exits, make keys
+        if fp_params:
+            cp2k_input = make_cp2k_input(sys_data, fp_params)
+        else:
+        # else read from user input
+            cp2k_input = make_cp2k_input_from_external(sys_data, exinput_path)
         with open('input.inp', 'w') as fp:
             fp.write(cp2k_input)
             fp.close()
